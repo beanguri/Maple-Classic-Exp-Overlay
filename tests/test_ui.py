@@ -12,7 +12,7 @@ from pathlib import Path
 DATA = Path(tempfile.mkdtemp())
 os.environ["MAPLE_EXP_DATA"] = str(DATA)                    # never touch your real data
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import maple_exp as m  # noqa: E402
+import appmod as m  # noqa: E402
 assert Path(os.environ["MAPLE_EXP_DATA"]) == m.DATA_DIR, "tests must run on their own temp data folder, never on real data"
 from screens import keep_windows_there, second_screen, stray_windows  # noqa: E402
 SCREEN = second_screen()                    # every window these tests open goes on the second screen, not the main one
@@ -86,7 +86,7 @@ def type_note(text):
 solo, group = row("Ant Tunnel I"), row("Wild Boar Land II", group=True)
 check("the log has a solo line and one shared party line", solo and group)
 check("the Note column is there, empty to begin with",
-      "note" in tree["columns"] and tree.item(solo, "values")[9] == "" and tree.item(group, "values")[9] == "")
+      "note" in tree["columns"] and tree.item(solo, "values")[11] == "" and tree.item(group, "values")[11] == "")
 check("with no line selected, the note box can't be typed in", str(box.cget("state")) == "disabled")
 
 # a solo line
@@ -97,7 +97,7 @@ type_note("Good drops, bring pots!")
 check("what's typed isn't saved at once (it waits for a pause)", on_disk()[("Ant Tunnel I", 1)] is None)
 pump(1.3)
 check("...but a moment later it's saved in the log file", on_disk()[("Ant Tunnel I", 1)] == "Good drops, bring pots!")
-check("...and the line gets its mark", tree.item(solo, "values")[9] == m.NOTE_MARK and "saved" in app.note_title.cget("text"))
+check("...and the line gets its mark", tree.item(solo, "values")[11] == m.NOTE_MARK and "saved" in app.note_title.cget("text"))
 
 # moving to another line saves the one left, and shows the other's note
 type_note(" More")
@@ -110,13 +110,13 @@ type_note("Pt of 4-5 works.\nKS-ing.")
 select(solo)
 check("a note on a shared party line goes on each party size", on_disk()[("Wild Boar Land II", 4)] == on_disk()[("Wild Boar Land II", 5)]
       == "Pt of 4-5 works.\nKS-ing.")
-check("...and shows on the shared line", tree.item(group, "values")[9] == m.NOTE_MARK)
+check("...and shows on the shared line", tree.item(group, "values")[11] == m.NOTE_MARK)
 tree.item(group, open=True)
 app._sync_group(group)
 child = tree.get_children(group)[0]
 select(child)
 check("opening it, each party size shows the same note", box.get("1.0", "end-1c") == "Pt of 4-5 works.\nKS-ing."
-      and tree.item(child, "values")[9] == m.NOTE_MARK)
+      and tree.item(child, "values")[11] == m.NOTE_MARK)
 
 # the log refreshes by itself every few minutes: that must not disturb a note being typed
 select(solo)
@@ -133,7 +133,7 @@ check("...and saved it first", on_disk()[("Ant Tunnel I", 1)] == before)
 app.autolog.rename(app.autolog.entries[[e["map"] for e in app.autolog.entries].index("Ant Tunnel I")], "Ant Tunnel One")
 app._fill_log()
 pump(0.2)
-check("renaming a map keeps its note", on_disk()[("Ant Tunnel One", 1)] == before and tree.item(row("Ant Tunnel One"), "values")[9] == m.NOTE_MARK)
+check("renaming a map keeps its note", on_disk()[("Ant Tunnel One", 1)] == before and tree.item(row("Ant Tunnel One"), "values")[11] == m.NOTE_MARK)
 check("...and the box goes empty (that line is gone under its old name)", str(box.cget("state")) == "disabled")
 
 # typing needs the hotkeys out of the way: Shift+1 is "!"
@@ -226,7 +226,7 @@ app._update_display()
 check("full mode doesn't show that line (it has the tile)", hero.itemcget(hero._mval, "state") == "hidden")
 
 # ---- the compact shapes: Square, Wide and Bar
-import ui_main  # noqa: E402
+from maple_overlay.ui import main_view as ui_main  # noqa: E402
 t.exp, t.pct, t.req, t.gained, t.levels = 31204, 54.2, 57600, 412300, 2
 t.rate, t.rolling_rate, t.elapsed = (lambda: 72566.0), (lambda: 71900.0), (lambda: 5620.0)
 meso.value, meso.gained = 18449220, 41000
@@ -741,7 +741,7 @@ check("paused while a run waits for a look: the status asks for the inventory", 
 app.autolog.pending = None
 
 # ---- a bar that shows only a percentage ("EXP. [50.00%]")
-import level_ocr  # noqa: E402
+from maple_overlay.vision import level_ocr  # noqa: E402
 from pics import badge_scene  # noqa: E402
 
 

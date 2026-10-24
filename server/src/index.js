@@ -96,7 +96,7 @@ const OTHER_JOBS = ["Beginner", "Pirate", "Brawler", "Marauder", "Buccaneer", "G
 export const KNOWN_JOBS = new Set([...OTHER_JOBS, ...Object.values(CLASSES).flatMap((c) => [...c.first, ...Object.values(c.paths).flat()])]);
 
 // EXP needed to finish each level in MapleStory Classic World (index 0 = level 1): the same
-// table as the overlay's (maple_exp.py), so a run can't claim more EXP than its levels hold.
+// table as the overlay's (maple_overlay/core/levels.py), so a run can't claim more EXP than its levels hold.
 const EXP_TABLE = [
   15, 34, 57, 92, 135, 372, 560, 840, 1242, 1716, 2360, 3216, 4200, 5460, 7050, 8840, 11040, 13716, 16680,
   20216, 24402, 28980, 34320, 40512, 47216, 54900, 63666, 73080, 83720, 95700, 108480, 122760, 138666,

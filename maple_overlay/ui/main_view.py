@@ -7,13 +7,12 @@ from tkinter import font as tkfont
 
 from PIL import Image, ImageDraw
 
-from ui_gfx import (GOLD_BOTTOM, GOLD_TOP, INK, TEXT, TEXT_DIM, TEXT_FAINT, UP, DOWN, Gfx, rgb)
+from maple_overlay.ui.gfx import (GOLD_BOTTOM, GOLD_TOP, INK, TEXT, TEXT_DIM, TEXT_FAINT, UP, DOWN, Gfx, rgb)
 
 W = 360                                   # the window's width, in logical pixels
 SIDE = 16
 INNER = W - 2 * SIDE
 # The compact shapes (see Strip): Square is the narrow card (the Hero in a smaller window); Wide and Bar are sideways.
-SHAPES = ("square", "wide", "bar")
 SHAPE_W = {"square": W, "wide": 560, "bar": 720}
 
 # state -> (dot colour, glows)
@@ -702,7 +701,9 @@ class MainView(tk.Frame):
         self.settings_btn = Button(icons, theme, icon="gear", kind="ghost", width=34, height=34, radius=10, command=cb["settings"], tip="Settings", bg=bg)
         self.compact_btn = Button(icons, theme, icon="shrink", kind="ghost", width=34, height=34, radius=10, command=cb["compact"], tip="Compact mode", bg=bg)
         self.log_btn = Button(icons, theme, icon="list", kind="ghost", width=34, height=34, radius=10, command=cb["log"], tip="Open the log", bg=bg)
-        for b in (self.log_btn, self.compact_btn, self.settings_btn):
+        self.party_btn = Button(icons, theme, icon="party", kind="ghost", width=34, height=34, radius=10,
+                                command=cb["party"], tip="Solo / Party window", bg=bg)
+        for b in (self.party_btn, self.log_btn, self.compact_btn, self.settings_btn):
             b.pack(side="left", padx=(2, 0))
 
         self.hero = Hero(self, theme, bg)
@@ -824,7 +825,12 @@ class MainView(tk.Frame):
                 w.grid()
         self.start_btn.resize(INNER - 8 if on else INNER - 8 - 52 - 52)
         self.compact_btn.set(icon="grow" if on else "shrink")
-        (self.log_btn.pack_forget() if on else self.log_btn.pack(side="left", padx=(2, 0), before=self.compact_btn))
+        if on:
+            self.party_btn.pack_forget()
+            self.log_btn.pack_forget()
+        else:
+            self.log_btn.pack(side="left", padx=(2, 0), before=self.compact_btn)
+            self.party_btn.pack(side="left", padx=(2, 0), before=self.log_btn)
 
     def _menu(self):
         self.cb["menu"](self.menu_btn)

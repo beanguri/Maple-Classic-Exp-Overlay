@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 NAME = "Maple Classic Exp Overlay"                 # the folder and the .exe
 ZIP_NAME = NAME.replace(" ", "-")                  # GitHub turns spaces in downloads into dots
-VERSION = re.search(r'^VERSION = "([^"]+)"', (ROOT / "maple_exp.py").read_text(encoding="utf-8"), re.M)[1]
+VERSION = re.search(r'^VERSION = "([^"]+)"', (ROOT / "maple_overlay" / "config.py").read_text(encoding="utf-8"), re.M)[1]
 TESSERACT = Path(os.environ.get("TESSERACT_DIR", r"C:\Program Files\Tesseract-OCR"))
 BUILD, RELEASE = ROOT / "build", ROOT / "release"
 

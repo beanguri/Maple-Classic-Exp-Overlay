@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+**Bigger window, tidier code**
+- **Drag the window's edge to make everything bigger or smaller together:** text, buttons, pictures, the log and the Solo / Party table, from 60% to 300%. A change of a few percent is ignored, and the window goes back to the tracker's own shape. With the log open, the log takes the extra width and the height sets the zoom. It works in all three compact shapes too. The zoom is remembered, and Settings > Size still works on top of it.
+- **The log's Details window zooms the same way:** drag its edge and its text, spacing, pace chart and buttons grow or shrink together.
+- **Solo / Party table:** per-hour columns are replaced by **Mesos** (the total) and two percentages: **% of level** (how much of the level's EXP bar the row is) and **% of total** (its share of the Total EXP).
+- **Your kills and a party member's kills are told apart** by the colour of the game's "You received EXP" line: white is your own kill (shown as **Solo** under Party), yellow is a party member's kill (**Party kills**). **Party bonus** is the yellow "Bonus EXP for PARTY" line, and **Other** is only what the lines couldn't explain. The sub-rows are coloured like the lines in the game. The log's kill counts use your own (white) kills only.
+- **Code layout:** the program moved from one big `maple_exp.py` and a few loose files into the `maple_overlay/` package (`core`, `vision`, `logs`, `ui`, `platforms`). `maple_exp.py` is now just the file you run, and nothing changes in how the overlay works or what it saves. See `docs/ARCHITECTURE.md`.
+- New test `tests/test_ui_size.py` drives the real window at several sizes (it needs a screen, so it isn't run by GitHub).
+
 ## 0.9.12-beta
 
 **Hotfix: an EXP bar that shows only a percentage**

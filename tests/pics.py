@@ -2,7 +2,7 @@
 Import it after maple_exp (the tests do that first, on their own temp data folder)."""
 import cv2
 import numpy as np
-import maple_exp as m
+import appmod as m
 
 
 def percent_only(bgr):

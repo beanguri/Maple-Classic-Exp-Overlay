@@ -17,7 +17,7 @@ os.environ["MAPLE_EXP_DATA"] = tempfile.mkdtemp()           # never touch your r
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
-import maple_exp as m  # noqa: E402
+import appmod as m  # noqa: E402
 assert Path(os.environ["MAPLE_EXP_DATA"]) == m.DATA_DIR, "tests must run on their own temp data folder, never on real data"
 
 FRAMES = Path(__file__).parent / "frames"
@@ -242,7 +242,7 @@ for name, info in sorted(PARTS["inventory"].items()):
           found is not None and found[0] + found[2] == bx + bw and found[1] == by)
 
 # ---- the potion bar: drawn with simple icons and the game's count glyphs, at three screen sizes
-import potions  # noqa: E402
+from maple_overlay.vision import potions  # noqa: E402
 
 DIGITS = potions.load_digits(Path(m.ASSETS) / "potion_digits.npz")
 
@@ -496,7 +496,7 @@ for f in sorted(FRAMES.glob("exp_*.png")):
     check(f"a bar with its number is not percentage-only, {size}", not got.percent_only and got.candidates == [(68601, 71.68)])
 
 # ---- the level badge ("LV." and the level in an orange box), read only when the bar shows no EXP number
-import level_ocr  # noqa: E402
+from maple_overlay.vision import level_ocr  # noqa: E402
 from pics import badge_scene  # noqa: E402
 
 

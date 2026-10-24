@@ -35,6 +35,12 @@ jobs:
         run: python tests/test_ocr.py
       - name: Window tests (the notes box, in the real window)
         run: python tests/test_ui.py
+      - name: Session, message-line and log-details tests
+        run: |
+          python tests/test_session_stats.py
+          python tests/test_exp_messages.py
+          python tests/test_log_details.py
+          python tests/test_log_extras.py
 
   macos:
     # The overlay can run from source on a Mac (the game in CrossOver, Whisky, Parallels or a
@@ -65,3 +71,9 @@ jobs:
         run: python tests/test_ocr.py
       - name: Window tests (the notes box, in the real window)
         run: python tests/test_ui.py
+      - name: Session, message-line and log-details tests
+        run: |
+          python tests/test_session_stats.py
+          python tests/test_exp_messages.py
+          python tests/test_log_details.py
+          python tests/test_log_extras.py

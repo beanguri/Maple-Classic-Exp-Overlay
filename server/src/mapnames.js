@@ -4,7 +4,7 @@
 // farms) are turned down. A name that isn't in the list (an event map, a new map) is NOT turned
 // down: it's kept as read, and the caller notes it for review.
 //
-// The same rules are in the overlay (maple_exp.py: snap_map_name), so a player's own log and
+// The same rules are in the overlay (maple_overlay/vision/maps.py: snap_map_name), so a player's own log and
 // the site agree.
 import { MAPS } from "./maps.js";
 

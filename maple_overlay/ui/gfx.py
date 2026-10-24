@@ -258,6 +258,13 @@ class Gfx:
             elif name == "more":
                 for x in (5, 12, 19):
                     d.ellipse((x * u - 1.7 * u, 12 * u - 1.7 * u, x * u + 1.7 * u, 12 * u + 1.7 * u), fill=255)
+            elif name == "party":
+                # two people: a big one in front-left, a smaller one behind-right
+                d.ellipse((13.2 * u, 4.2 * u, 18.8 * u, 9.8 * u), fill=255)
+                d.pieslice((11 * u, 12.5 * u, 21.6 * u, 25 * u), 180, 360, fill=255)
+                d.ellipse((4.6 * u, 5.4 * u, 11.4 * u, 12.2 * u), fill=0)          # (a gap where the front person overlaps)
+                d.ellipse((5.2 * u, 6 * u, 10.8 * u, 11.6 * u), fill=255)
+                d.pieslice((2.2 * u, 14.2 * u, 13.8 * u, 28 * u), 180, 360, fill=255)
             elif name == "link":
                 line((8, 16), (16, 8)); line((9, 8), (16, 8), (16, 15))
             elif name in ("down", "up"):
