@@ -1,8 +1,9 @@
 """macOS: MapleStory runs in a Windows layer (CrossOver, Whisky, Parallels...) or a game
 stream, so its window is found through CoreGraphics by its title or program name. A window
 is known by its window number, and positions are in points: the units mss screenshots and
-tkinter use too. Window titles (and screenshots of other programs) need the Screen Recording
-permission."""
+tkinter use too. The game is pictured from its window alone, so windows on top of it (the
+overlay's included) don't get in the way. Window titles (and screenshots of other programs)
+need the Screen Recording permission."""
 import ctypes
 import fcntl
 import os
@@ -11,6 +12,8 @@ import subprocess
 import tempfile
 from collections import namedtuple
 from pathlib import Path
+
+import numpy as np
 
 from .base import Hotkeys, Platform
 
@@ -39,10 +42,20 @@ _NumberValue = _api(_cf.CFNumberGetValue, ctypes.c_bool, _vp, ctypes.c_long, _vp
 _StringValue = _api(_cf.CFStringGetCString, ctypes.c_bool, _vp, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32)
 _BoolValue = _api(_cf.CFBooleanGetValue, ctypes.c_bool, _vp)
 _CFRelease = _api(_cf.CFRelease, None, _vp)
+_CreateImage = _api(_cg.CGWindowListCreateImage, _vp, _CGRect, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32)
+_ImageWidth, _ImageHeight, _ImageRowBytes, _ImageBits = (_api(f, ctypes.c_size_t, _vp) for f in (
+    _cg.CGImageGetWidth, _cg.CGImageGetHeight, _cg.CGImageGetBytesPerRow, _cg.CGImageGetBitsPerPixel))
+_ImageInfo = _api(_cg.CGImageGetBitmapInfo, ctypes.c_uint32, _vp)
+_ImageData = _api(_cg.CGImageGetDataProvider, _vp, _vp)
+_CopyData = _api(_cg.CGDataProviderCopyData, _vp, _vp)
+_DataBytes = _api(_cf.CFDataGetBytePtr, _vp, _vp)
+_DataLength = _api(_cf.CFDataGetLength, ctypes.c_long, _vp)
 _KEYS = {k: _vp.in_dll(_cg, "kCGWindow" + k).value
          for k in ("Number", "OwnerPID", "OwnerName", "Name", "Layer", "Bounds", "IsOnscreen")}
 _ON_SCREEN, _ONLY_THIS, _NO_DESKTOP = 1, 8, 16          # kCGWindowListOption...
+_IGNORE_FRAMING, _NOMINAL = 1, 16                      # kCGWindowImage...: no shadow, points not Retina pixels
 _TOPMOST = 19                                           # the window layer of Always on top (tkinter's -topmost)
+_POPUP = 101                                            # kCGPopUpMenuWindowLevel
 
 MacWindow = namedtuple("MacWindow", "number pid owner title layer rect onscreen")
 
@@ -90,10 +103,13 @@ def window_list(option=_ON_SCREEN | _NO_DESKTOP, number=0):
 
 def is_game(w, own_pid):
     """Could this window be MapleStory's?"""
-    # Normal windows up to always-on-top ones: not the Dock, menu bar and the like above them.
-    if not 0 <= w.layer <= _TOPMOST or w.pid == own_pid or not w.rect or w.owner.lower() in _NOT_GAME:
+    if w.layer < 0 or w.pid == own_pid or not w.rect or w.owner.lower() in _NOT_GAME:
         return False
-    return "maplestory" in w.title.lower().replace(" ", "") or "maplestory" in w.owner.lower()
+    # Nexon's own Mac app ("MapleStory Classic World") puts the game above the menu bar's layer.
+    if "maplestory" in w.owner.lower().replace(" ", ""):
+        return w.layer < _POPUP
+    # Normal windows up to always-on-top ones: not the Dock, menu bar and the like above them.
+    return w.layer <= _TOPMOST and "maplestory" in w.title.lower().replace(" ", "")
 
 
 class MacHotkeys(Hotkeys):
@@ -155,7 +171,8 @@ class MacPlatform(Platform):
         for w in window_list():
             if is_game(w, os.getpid()):
                 rect = self.client_rect(w.number)
-                found.append((rect[2] * rect[3] if rect else 0, w.number))
+                if rect:                               # not the launcher's 1x1 window
+                    found.append((rect[2] * rect[3], w.number))
         return max(found)[1] if found else None
 
     def window_exists(self, number):
@@ -169,6 +186,28 @@ class MacPlatform(Platform):
             return None
         x, y, width, height = (round(v) for v in w.rect)
         return (x, y, width, height) if width >= 100 and height >= 100 else None
+
+    captures_window_alone = True
+
+    def capture_window(self, number, left, top, width, height):
+        image = _CreateImage(_CGRect(left, top, width, height), _ONLY_THIS, number, _IGNORE_FRAMING | _NOMINAL)
+        if not image:
+            return None
+        data = None
+        try:
+            info = _ImageInfo(image)                 # BGRA: 32-bit little-endian, alpha (or nothing) first
+            if ((_ImageWidth(image), _ImageHeight(image), _ImageBits(image)) != (width, height, 32)
+                    or info & 0x7000 != 0x2000 or info & 0x1F not in (2, 4, 6)):
+                return None                          # (cut by the screen's edge, or another pixel layout)
+            data = _CopyData(_ImageData(image))
+            if not data:
+                return None
+            rows = (ctypes.c_ubyte * _DataLength(data)).from_address(_DataBytes(data))
+            return np.ndarray((height, width, 4), np.uint8, rows, strides=(_ImageRowBytes(image), 4, 1)).copy()
+        finally:
+            if data:
+                _CFRelease(data)
+            _CFRelease(image)
 
     def own_window_rect(self, root):
         x, y = root.winfo_rootx() + 1, root.winfo_rooty() + 1

@@ -760,6 +760,75 @@ check("a %-only bar in a selected area is read, with no level, and typing one in
       got.percent_only and got.level is None and r.level_failures >= m.LEVEL_FAILS_FOR_FALLBACK
       and "Selected area" in r.level_look["why"])
 
+# an OS that can picture the game window alone (macOS): what's on top of the game on screen doesn't matter
+class OneWindow:
+    """Stands in for PLATFORM: one game window (number 7) at rect, pictured alone as `alone` (None: that fails)."""
+    def __init__(self, rect, alone, can=True):
+        self.rect, self.alone, self.captures_window_alone, self.asked = rect, alone, can, []
+
+    def find_game_window(self):
+        return 7
+
+    def window_exists(self, number):
+        return number == 7
+
+    def client_rect(self, number):
+        return self.rect
+
+    def missing_permission(self):
+        return None
+
+    def capture_window(self, number, left, top, width, height):
+        self.asked.append((number, left, top, width, height))
+        if self.alone is None:
+            return None
+        x, y = left - self.rect[0], top - self.rect[1]
+        part = self.alone[y:y + height, x:x + width]
+        return np.dstack([part, np.full(part.shape[:2], 255, np.uint8)])
+
+
+game = np.full((720, 1280, 3), 25, np.uint8)
+exp_bar = cv2.imread(str(FRAMES / "exp_win-1280x720.png"))
+game[720 - exp_bar.shape[0] - 6:714, 400:400 + exp_bar.shape[1]] = exp_bar
+own = (50 + 380, 30 + 720 - 40, 200, 40)                # this app's window, on top of the EXP bar
+on_screen = np.full((800, 1400, 3), 60, np.uint8)       # the game at (50, 30), this app's window over it
+on_screen[30:750, 50:1330] = game
+on_screen[own[1]:own[1] + own[3], own[0]:own[0] + own[2]] = 200
+
+
+def read_through(platform, screen):
+    real_platform, real_ok = m.PLATFORM, m.tesseract_ok
+    m.PLATFORM, m.tesseract_ok = platform, False
+    try:
+        r = m.ScreenReader(m.DigitTemplates.load())
+        r.own_rect = own
+        return [r.read(FakeScreen(screen)) for _ in range(3)], r
+    finally:
+        m.PLATFORM, m.tesseract_ok = real_platform, real_ok
+
+
+got, r = read_through(OneWindow((50, 30, 1280, 720), game), on_screen)
+check("pictured alone, the game's EXP bar is read with this app's window on top of it",
+      all(x.confident and x.candidates == [(68601, 71.68)] for x in got) and r.diagnostics()["covering"] == [])
+platform = OneWindow((50, 30, 1280, 720), game)
+read_through(platform, on_screen)
+check(f"...pictured once per look, the whole window, every part cut from that ({len(platform.asked)} pictures in 3 looks)",
+      platform.asked == [(7, 50, 30, 1280, 720)] * 3)
+
+seen_by_self = on_screen.copy()                           # this app's window happens to show an EXP bar
+seen_by_self[own[1] + 6:own[1] + 6 + exp_bar.shape[0], own[0] + 20:own[0] + 20 + exp_bar.shape[1]] = exp_bar
+seen_by_self[30 + 720 - exp_bar.shape[0] - 6:744, 450:450 + exp_bar.shape[1]] = 25
+got, _ = read_through(OneWindow((50, 30, 1280, 720), None), seen_by_self)
+check("if picturing the window alone fails, the screen is used, still without ever reading this app's own window",
+      not any(x.candidates for x in got))
+got, _ = read_through(OneWindow((50, 30, 1280, 720), None), on_screen)
+check("...and it says when this app's window is covering the bar, as without the picture",
+      not any(x.confident for x in got) and "covering" in got[-1].where)
+
+got, _ = read_through(OneWindow((50, 30, 1280, 720), game, can=False), on_screen)
+check("an OS that can't picture a window alone still says this app's window is covering the bar",
+      not any(x.confident for x in got) and "covering" in got[-1].where)
+
 if m.tesseract_ok:
     game = cv2.imread(str(Path(__file__).resolve().parent.parent / "docs" / "screenshot-game.jpg"))
     check("the real badge (Lv 32, a JPEG of the game at 1080p) reads as 32 with real Tesseract",
