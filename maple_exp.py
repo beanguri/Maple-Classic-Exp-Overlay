@@ -350,6 +350,37 @@ def grab(sct, left, top, width, height):
     return np.ascontiguousarray(shot[:, :, :3]), x0, y0
 
 
+def black_out(img, left, top, rect):
+    """A screenshot whose top-left is at (left, top), with the screen rectangle rect blacked out
+    (a copy, if any of it was inside)."""
+    if not rect:
+        return img
+    x0, y0 = max(0, rect[0] - left), max(0, rect[1] - top)
+    x1, y1 = min(img.shape[1], rect[0] + rect[2] - left), min(img.shape[0], rect[1] + rect[3] - top)
+    if x0 < x1 and y0 < y1:
+        img = img.copy()
+        img[y0:y1, x0:x1] = 0
+    return img
+
+
+class WindowScreen:
+    """Stands in for mss for one look at the game window, from `whole`: a picture of the window
+    alone (PLATFORM.capture_window), so nothing on top of the game is in the way. It's taken once
+    per look since each picture costs about the same, whatever its size. A screenshot reaching
+    outside the window is a normal one, with this app's window blacked out."""
+
+    def __init__(self, sct, rect, whole, own_rect):
+        self.sct, self.rect, self.whole, self.own_rect = sct, rect, whole, own_rect
+        self.monitors = sct.monitors
+
+    def grab(self, r):
+        x, y, w, h = self.rect
+        left, top, width, height = r["left"], r["top"], r["width"], r["height"]
+        if x <= left and y <= top and left + width <= x + w and top + height <= y + h:
+            return self.whole[top - y:top - y + height, left - x:left - x + width]
+        return black_out(np.array(self.sct.grab(r)), left, top, self.own_rect)
+
+
 # --------------------------------------------------------------------------- reading the bar
 #
 # The status bar shows "EXP. 38,849 [61.02%]": white digits and green brackets. The game
@@ -1367,6 +1398,7 @@ class ScreenReader:
         self.party_area = None      # where the party list was last seen, on screen
         self.next_scan = 0.0
         self.own_rect = None        # this app's window, which screenshots can't see through
+        self.window_alone = False   # the game window is pictured alone: nothing on top of it is in the way
         self.look_again_requested = False
         self.exp_anchor = None      # where the EXP number starts, relative to the game window
         self.job = None             # the class shown in the status bar
@@ -1416,6 +1448,11 @@ class ScreenReader:
             self._forget_places()
         rect = self._game_rect()
         self.last_rect = rect
+        self.window_alone = False
+        if self.mode == "window" and rect and PLATFORM.captures_window_alone:
+            whole = PLATFORM.capture_window(self.hwnd, *rect)
+            if whole is not None:                       # (else the screen, as on Windows)
+                sct, self.window_alone = WindowScreen(sct, rect, whole, self.own_rect), True
         if self.mode == "region":
             reading = self._read_region(sct, rect)
         elif not self.hwnd and PLATFORM.missing_permission():
@@ -1568,22 +1605,16 @@ class ScreenReader:
 
     def _hide_own(self, shot):
         """The screenshot with this app's window blacked out, so it can never read itself."""
-        r = self.own_rect
-        if not shot or not r:
+        if not shot or self.window_alone:
             return shot
         img, sx, sy = shot
-        x0, y0 = max(0, r[0] - sx), max(0, r[1] - sy)
-        x1, y1 = min(img.shape[1], r[0] + r[2] - sx), min(img.shape[0], r[1] + r[3] - sy)
-        if x0 < x1 and y0 < y1:
-            img = img.copy()
-            img[y0:y1, x0:x1] = 0
-        return img, sx, sy
+        return black_out(img, sx, sy, self.own_rect), sx, sy
 
     def _covered(self, x, y, w, h, margin=0):
         """Does this app's window overlap (or come within margin px of) the given area?"""
         r = self.own_rect
-        return bool(r) and (x - margin < r[0] + r[2] and r[0] < x + w + margin
-                            and y - margin < r[1] + r[3] and r[1] < y + h + margin)
+        return bool(r) and not self.window_alone and (x - margin < r[0] + r[2] and r[0] < x + w + margin
+                                                      and y - margin < r[1] + r[3] and r[1] < y + h + margin)
 
     def _remember(self, lay, rect, shot=None):
         if lay and rect:
@@ -5431,8 +5462,12 @@ class App:
         if not rect:
             return None
         try:
+            r, hwnd = self.reader, self.reader.hwnd     # (the reading thread may change them meanwhile)
+            whole = PLATFORM.capture_window(hwnd, *rect) if hwnd and r.mode == "window" else None
             with mss.mss() as sct:
-                shot = self.reader._hide_own(grab(sct, *rect))
+                shot = grab(sct if whole is None else WindowScreen(sct, rect, whole, None), *rect)
+            if shot and whole is None:
+                shot = black_out(shot[0], shot[1], shot[2], r.own_rect), shot[1], shot[2]
             if not shot:
                 return None
             img = Image.fromarray(cv2.cvtColor(shot[0], cv2.COLOR_BGR2RGB))
