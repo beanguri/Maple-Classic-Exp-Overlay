@@ -1,5 +1,5 @@
 // Health reports (POST /api/health) and player reports (POST /api/report). Numbers and text only; nothing here is
-// ever served back. Contract: the shared examples in tests/health_contract.json.
+// ever served back. Contract: the shared examples in tests/health_contract_v2.json.
 //
 // How the limits stay atomic: one env.DB.batch() (a transaction) runs, in order,
 //   1. the INSERT of the report row, with a WHERE that checks every counter is under its cap;
@@ -18,13 +18,19 @@ const REPORT_MAX_BYTES = 16384;
 
 const HEALTH_KEYS = ["id", "version", "day", "os", "screens", "game", "capture", "tesseract", "seconds_tracking",
   "looks", "exp"];
-const HEALTH_OPTIONAL = ["level", "map", "class", "mesos", "potions", "errors", "ms", "shadow"];
+const HEALTH_OPTIONAL = ["level", "map", "class", "mesos", "potions", "errors", "ms", "shadow", "ui", "shadow_mesos",
+  "shadow_party", "shadow_why"];
 const EXP_KEYS = ["read", "tesseract", "unclear", "not_found", "covered", "no_window", "percent_only"];
 const PAIRS = {            // the optional "tried / read" counters and their exact keys
   level: ["read", "unclear"], map: ["read", "unread"], class: ["read", "unread"],
   mesos: ["read", "unclear"], potions: ["read", "unclear"],
 };
 const SHADOW_KEYS = ["agree", "disagree", "v2_only", "old_only", "neither", "skipped", "errors"];
+// Added for 0.9.14 (all optional, so 0.9.13's reports stay valid). The counts are only range-checked here, and for
+// ui and shadow_why also <= looks; no cross-sums, so a client counting slip can never lose a whole day.
+const UI_KEYS = ["default", "ideal", "keyboard", "controller"];
+const WHY_KEYS = ["not_found", "unclear"];
+const MS_KEYS = ["look_avg", "look_p95", "v2_avg", "mesos_v2_avg", "party_v2_avg"];
 
 const VERSION = /^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/;
 const HEX_ID = /^[0-9a-f]{16}$/;
@@ -82,11 +88,18 @@ export function badHealthField(b, today) {
   }
   if (Object.hasOwn(b, "ms")) {
     const m = b.ms, ms = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 10000;
-    if (!isObject(m) || Object.keys(m).some((k) => !["look_avg", "look_p95", "v2_avg"].includes(k)) ||
-        !ms(m.look_avg) || !ms(m.look_p95) || (Object.hasOwn(m, "v2_avg") && !ms(m.v2_avg))) return "ms";
+    if (!isObject(m) || Object.keys(m).some((k) => !MS_KEYS.includes(k)) ||
+        !ms(m.look_avg) || !ms(m.look_p95) ||
+        MS_KEYS.slice(2).some((k) => Object.hasOwn(m, k) && !ms(m[k]))) return "ms";
   }
   if (Object.hasOwn(b, "shadow") && (!sameKeys(b.shadow, SHADOW_KEYS) || !SHADOW_KEYS.every((k) => count(b.shadow[k])))) {
     return "shadow";
+  }
+  for (const name of ["shadow_mesos", "shadow_party"]) {
+    if (Object.hasOwn(b, name) && (!sameKeys(b[name], SHADOW_KEYS) || !SHADOW_KEYS.every((k) => count(b[name][k])))) return name;
+  }
+  for (const [name, keys] of [["ui", UI_KEYS], ["shadow_why", WHY_KEYS]]) {
+    if (Object.hasOwn(b, name) && (!sameKeys(b[name], keys) || !keys.every((k) => isInt(b[name][k], 0, b.looks)))) return name;
   }
   return null;
 }

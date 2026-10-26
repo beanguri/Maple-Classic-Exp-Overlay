@@ -3,7 +3,7 @@
     wrangler d1 execute classicexp --local --persist-to .wrangler/test-state --file schema.sql
     wrangler d1 execute classicexp --local --persist-to .wrangler/test-state --file schema_reports.sql
     wrangler pages dev public --ip 127.0.0.1 --port 8791 --persist-to .wrangler/test-state \
-        --binding IP_SALT=local-test --binding REPORTS_TEST={"healthSite":8,"reportSite":7,"purgeEvery":1}
+        --binding IP_SALT=local-test --binding REPORTS_TEST={"healthSite":40,"reportSite":7,"purgeEvery":1}
     python server/test_reports.py http://127.0.0.1:8791
 
 Then a short second run WITHOUT the IP_SALT binding (fresh database again):
@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOST = urlparse(BASE)
 failures = 0
 
-with open(os.path.join(HERE, "..", "tests", "health_contract.json"), encoding="utf-8") as f:
+with open(os.path.join(HERE, "..", "tests", "health_contract_v2.json"), encoding="utf-8") as f:
     CONTRACT = json.load(f)
 # The server's test clock: noon UTC on the contract's "today".
 NOW = int(datetime.fromisoformat(CONTRACT["today"] + "T12:00:00+00:00").timestamp() * 1000)
@@ -83,6 +83,8 @@ def with_change(base, change):
     return body
 
 
+with open(os.path.join(HERE, "..", "tests", "health_contract.json"), encoding="utf-8") as f:
+    OLD_CONTRACT = json.load(f)   # 0.9.13's examples: the new server must still take them
 health_full = CONTRACT["health_valid"][0]["body"]
 report_ok = CONTRACT["report_valid"][0]["body"]
 
@@ -104,14 +106,29 @@ def fresh():
 
 
 # ---- the shared contract: every valid case is taken, every invalid one is named
-for case in CONTRACT["health_valid"]:
-    status, a = post("/api/health", case["body"], ip=fresh())
+for i, case in enumerate(CONTRACT["health_valid"]):
+    # The v2 examples share the first one's id and day, which the server (rightly) answers as a repeat: give each its own id.
+    body = case["body"] if i == 0 else dict(case["body"], id="%016x" % (0xa00 + i))
+    status, a = post("/api/health", body, ip=fresh())
     check(f"health valid: {case['name']}", status == 200 and a == {"ok": True})
 for case in CONTRACT["health_invalid"]:
     before = everything()
     status, a = post("/api/health", with_change(health_full, case["change"]), ip=fresh())
     check(f"health invalid {case['field']}: {list(case['change'])[0]}", status == 400 and a.get("error") == case["field"])
 check("invalid health reports wrote nothing", everything() == before)
+for case in OLD_CONTRACT["health_valid"]:
+    body = dict(case["body"], id="e" + case["body"]["id"][1:])   # a new id: the shared examples above are already stored
+    status, a = post("/api/health", body, ip=fresh())
+    check(f"0.9.13 shape still accepted: {case['name']}", status == 200 and a == {"ok": True})
+v2_all = next(dict(c["body"], id="%016x" % (0xa00 + i)) for i, c in enumerate(CONTRACT["health_valid"])
+              if c["name"] == "v2: every new key")
+check("a v2 body is stored whole (new keys kept)", json.loads(sql(
+    "SELECT body FROM health_reports WHERE id = '%s'" % v2_all["id"])[0]["body"]) == v2_all)
+# The read-only deploy check (ticket 18): a body with "ui" and a bad id. An old server names "ui"; this one names "id".
+before = everything()
+status, a = post("/api/health", dict(health_full, id="BAD", ui=CONTRACT["health_valid"][3]["body"]["ui"]), ip=fresh())
+check("deploy check: new server names the bad id, not ui", status == 400 and a.get("error") == "id")
+check("...and stores nothing", everything() == before)
 check("the stored body is the one sent", json.loads(sql(
     "SELECT body FROM health_reports WHERE id = '0123456789abcdef'")[0]["body"]) == health_full)
 
@@ -132,9 +149,10 @@ check("...a refused request answers {retry: true}", status == 429 and a == {"ret
 check("...and writes nothing", everything() == before)
 check("a refused report isn't stored", n("health_reports", "id = 'b000000000000000'") == 0)
 
-# ---- site cap (8 in this test run): 3 + 3 so far, two more fit, the next doesn't
-check("health: site cap lets the next two in", all(
-    post("/api/health", dict(health_full, id="c%015x" % i), ip=fresh())[0] == 200 for i in range(2)))
+# ---- site cap (40 in this test run): fill what is left, then the next one is refused
+left = 40 - sql("SELECT n FROM limits WHERE key = 'h:site'")[0]["n"]
+check(f"health: site cap lets the last {left} in", all(
+    post("/api/health", dict(health_full, id="c%015x" % i), ip=fresh())[0] == 200 for i in range(left)))
 before = everything()
 status, a = post("/api/health", dict(health_full, id="d" + "0" * 15), ip="10.7.0.1")
 check("health: over the site cap is refused", status == 429)

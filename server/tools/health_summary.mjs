@@ -23,6 +23,9 @@ const J = (p) => `json_extract(body,'$.${p}')`;
 const S = (p) => `COALESCE(SUM(${J(p)}),0)`;
 
 /** The five aggregate queries for reports received at or after `since` (an ISO time made here, never typed). */
+const SHADOW_FIELDS = [["agree", "agree"], ["disagree", "dis"], ["v2_only", "v2only"], ["old_only", "oldonly"],
+  ["neither", "neither"], ["skipped", "skipped"], ["errors", "err"]];
+const SHADOW_PARTS = [["shadow_mesos", "shm"], ["shadow_party", "shp"]];   // mesos and party boxes (0.9.14)
 export function queries(since) {
   const w = `received >= '${since}' AND json_valid(body)`;
   return {
@@ -37,6 +40,12 @@ export function queries(since) {
       ${S("shadow.agree")} AS sh_agree, ${S("shadow.disagree")} AS sh_dis, ${S("shadow.v2_only")} AS sh_v2only,
       ${S("shadow.old_only")} AS sh_oldonly, ${S("shadow.neither")} AS sh_neither, ${S("shadow.skipped")} AS sh_skipped,
       ${S("shadow.errors")} AS sh_err,
+      ${S("ui.default")} AS ui_default, ${S("ui.ideal")} AS ui_ideal, ${S("ui.keyboard")} AS ui_kb, ${S("ui.controller")} AS ui_ctl,
+      ${S("shadow_why.not_found")} AS why_nf, ${S("shadow_why.unclear")} AS why_unclear,
+      ${SHADOW_PARTS.map(([p, c]) => SHADOW_FIELDS.map(([f, a]) => `${S(p + "." + f)} AS ${c}_${a}`).join(", ")).join(", ")},
+      COALESCE(SUM(${J("ms.mesos_v2_avg")} * ${J("looks")}),0) AS ms_mes_w, COALESCE(SUM(${J("ms.party_v2_avg")} * ${J("looks")}),0) AS ms_par_w,
+      COALESCE(SUM(CASE WHEN ${J("ms.mesos_v2_avg")} IS NOT NULL THEN ${J("looks")} END),0) AS mes_looks,
+      COALESCE(SUM(CASE WHEN ${J("ms.party_v2_avg")} IS NOT NULL THEN ${J("looks")} END),0) AS par_looks,
       COALESCE(SUM(${J("ms.look_avg")} * ${J("looks")}),0) AS ms_look_w,
       COALESCE(SUM(${J("ms.v2_avg")} * ${J("looks")}),0) AS ms_v2_w,
       COALESCE(SUM(CASE WHEN ${J("ms.v2_avg")} IS NOT NULL THEN ${J("looks")} END),0) AS v2_looks
@@ -139,8 +148,24 @@ export function summarize(data, dayCount) {
       `neither ${num(total.sh_neither)}, skipped ${num(total.sh_skipped)}, errors ${num(total.sh_err)}`);
     const v2 = total.v2_looks ? (total.ms_v2_w / total.v2_looks).toFixed(1) : "-";
     out.push(`   ms per look: new reader ${v2}, whole look ${total.looks ? (total.ms_look_w / total.looks).toFixed(1) : "-"}`);
+    const why = total.why_nf + total.why_unclear;
+    if (why) out.push(`   EXP "old only" split by why v2 missed it: not found ${num(total.why_nf)}, unclear ${num(total.why_unclear)}`);
     const dis = data.disagree || [];
     out.push(dis.length ? "   players with a disagree: " + dis.map((d) => `${d.sid} x${num(d.d)}`).join(", ") : "   no player has a disagree");
+  }
+
+  // 6b. UI size and layout (0.9.14 on), and the mesos and party shadow readers.
+  out.push("", "6b. UI size and layout, mesos and party shadow readers (0.9.14 on)");
+  const uiMode = total.ui_default + total.ui_ideal, uiLay = total.ui_kb + total.ui_ctl;
+  out.push(uiMode || uiLay
+    ? `   UI size: Default ${num(total.ui_default)} (${pct(total.ui_default, uiMode)}), Ideal ${num(total.ui_ideal)} (${pct(total.ui_ideal, uiMode)});` +
+      ` layout: keyboard ${num(total.ui_kb)} (${pct(total.ui_kb, uiLay)}), controller ${num(total.ui_ctl)} (${pct(total.ui_ctl, uiLay)})`
+    : "   no UI size or layout data yet");
+  for (const [name, c, ms, lk] of [["mesos", "shm", "ms_mes_w", "mes_looks"], ["party size", "shp", "ms_par_w", "par_looks"]]) {
+    const f = Object.fromEntries(SHADOW_FIELDS.map(([, a]) => [a, total[`${c}_${a}`]]));
+    if (!Object.values(f).some((v) => v)) { out.push(`   ${name}: no shadow data yet`); continue; }
+    out.push(`   ${name}: agree ${num(f.agree)}, disagree ${num(f.dis)}, v2 only ${num(f.v2only)}, old only ${num(f.oldonly)}, ` +
+      `neither ${num(f.neither)}, skipped ${num(f.skipped)}, errors ${num(f.err)}; ms per look ${total[lk] ? (total[ms] / total[lk]).toFixed(1) : "-"}`);
   }
 
   // 7. Worst installs.
@@ -159,6 +184,9 @@ export function summarize(data, dayCount) {
   }
   const bad = tess.filter((t) => t.key !== "ok" && t.players > 0);
   for (const t of bad) notes.push(`Tesseract "${t.key}" on ${num(t.players)} players`);
+  for (const [name, c] of [["mesos", "shm"], ["party size", "shp"]]) {
+    if (total[c + "_dis"] > 0) notes.push(`${name} shadow disagreed ${num(total[c + "_dis"])} times: check these first`);
+  }
   if (total.sh_dis > 0) notes.push(`shadow mode disagreed ${num(total.sh_dis)} times: check these first`);
   out.push(...(notes.length ? notes.map((n) => "   - " + n) : ["   - nothing stands out"]));
   return out;

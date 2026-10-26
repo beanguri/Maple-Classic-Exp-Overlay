@@ -6,6 +6,7 @@ import { summarize, summarizeReports, formatOne, oneReportQuery, queries } from 
 const base = { looks: 0, secs: 0, gh: null, e_read: 0, e_tess: 0, e_unclear: 0, e_nf: 0, e_cov: 0, e_nowin: 0, e_pct: 0,
   map_r: 0, map_u: 0, cls_r: 0, cls_u: 0, mes_r: 0, mes_u: 0, pot_r: 0, pot_u: 0, sh_agree: 0, sh_dis: 0, sh_v2only: 0,
   sh_oldonly: 0, sh_neither: 0, sh_skipped: 0, sh_err: 0, ms_look_w: 0, ms_v2_w: 0, v2_looks: 0 };
+// (the 0.9.14 columns are missing from "base" on purpose: the summary must cope with groups that lack them)
 
 // Empty database.
 assert.deepEqual(summarize({ groups: [] }, 7), ["No health reports yet in the last 7 days."]);
@@ -42,6 +43,19 @@ assert.ok(!/conn/i.test(text), "no connection codes in the summary");
 const quiet = summarize({ groups: [{ ...base, v: "0.9.13-beta", w: 1920, h: 1080, fs: 0, tess: "ok", cap: "screen", players: 1,
   looks: 500, e_read: 500 }], days: [{ day: "2026-10-25", v: "0.9.13-beta", players: 1 }] }, 7).join("\n");
 assert.ok(quiet.includes("no shadow data yet") && quiet.includes("nothing stands out"), quiet);
+
+// 0.9.14 numbers: UI size and layout, mesos and party shadow readers, the EXP "why" split.
+const none = { shm_agree: 0, shm_dis: 0, shm_v2only: 0, shm_oldonly: 0, shm_neither: 0, shm_skipped: 0, shm_err: 0,
+  shp_agree: 0, shp_dis: 0, shp_v2only: 0, shp_oldonly: 0, shp_neither: 0, shp_skipped: 0, shp_err: 0,
+  ui_default: 0, ui_ideal: 0, ui_kb: 0, ui_ctl: 0, why_nf: 0, why_unclear: 0, ms_mes_w: 0, ms_par_w: 0, mes_looks: 0, par_looks: 0 };
+const v2 = summarize({ groups: [{ ...base, ...none, v: "0.9.14", w: 1920, h: 1080, fs: 1, tess: "ok", cap: "screen", players: 3,
+  looks: 1000, e_read: 1000, ui_default: 600, ui_ideal: 200, ui_kb: 700, ui_ctl: 100, why_nf: 30, why_unclear: 5,
+  shm_agree: 80, shm_dis: 2, shm_v2only: 3, ms_mes_w: 3000, mes_looks: 1000, shp_agree: 50, sh_oldonly: 1 }],
+  days: [{ day: "2026-10-25", v: "0.9.14", players: 3 }] }, 7).join("\n");
+for (const want of ["UI size: Default 600 (75.0%), Ideal 200 (25.0%)", "keyboard 700 (87.5%), controller 100 (12.5%)",
+  "mesos: agree 80, disagree 2, v2 only 3", "ms per look 3.0", "party size: agree 50", "not found 30, unclear 5",
+  "mesos shadow disagreed 2 times"]) assert.ok(v2.includes(want), "missing: " + want + "\n" + v2);
+assert.ok(quiet.includes("no UI size or layout data yet") && quiet.includes("mesos: no shadow data yet"), quiet);
 
 // Send report lists and one report in full.
 const lines = summarizeReports([{ n: 12, d: "2026-10-25", version: "0.9.14-beta", id: "0123456789abcdef", m: "it says not found" }]);
