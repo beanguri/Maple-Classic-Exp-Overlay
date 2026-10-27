@@ -101,14 +101,12 @@ check("controller layouts are told apart from keyboard", [potion_bar.is_controll
 check("not built yet: the reader says 'not seen', never a guess",
       potion_bar.read_potions(None, 1920, 1080) == potion_bar.NOT_SEEN and not potion_bar.NOT_SEEN.seen)
 
-# ---- the second health report contract (tickets 10 and 11 test the site and the overlay against it)
+# ---- the health report contract (the site and the overlay are tested against it; 0.9.13's cases are the ones without "v2:")
 here = Path(__file__).parent
-old = json.loads((here / "health_contract.json").read_text(encoding="utf-8"))
 new = json.loads((here / "health_contract_v2.json").read_text(encoding="utf-8"))
-check("contract v2 keeps every valid case of the first one", all(c in new["health_valid"] for c in old["health_valid"]))
-check("contract v2 keeps every invalid case of the first one", all(c in new["health_invalid"] for c in old["health_invalid"]))
-check("contract v2 keeps the Send report cases", new["report_valid"] == old["report_valid"]
-      and new["report_invalid"] == old["report_invalid"])
+check("the old contract file is gone (its cases live on in the v2 file)", not (here / "health_contract.json").exists())
+check("contract v2 still has 0.9.13's three valid bodies", [c["name"] for c in new["health_valid"][:3]]
+      == ["full", "minimal, game never found", "mac, scaling unknown, bar never found, region"])
 NEW = ("ui", "shadow_mesos", "shadow_party", "shadow_why")
 for key in NEW:
     check(f"contract v2 has a valid case with {key}", any(key in c["body"] for c in new["health_valid"]))

@@ -136,7 +136,7 @@ check("links are turned down, like the site does", all(report.message_problem(t)
       ("see http://a.b", "www.x.org", "join discord.gg/abc", "go to evil.com/x", "HTTPS://X")))
 check("a plain sentence is fine", report.message_problem("It stopped reading after I changed maps.") is None)
 
-contract = json.loads((Path(__file__).parent / "health_contract.json").read_text(encoding="utf-8"))
+contract = json.loads((Path(__file__).parent / "health_contract_v2.json").read_text(encoding="utf-8"))
 for case in contract["report_valid"]:
     b = case["body"]
     body = report.report_body(b["id"], b["version"], "  " + b["message"] + " \n", b["details"])

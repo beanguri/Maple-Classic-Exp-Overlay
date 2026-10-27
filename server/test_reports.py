@@ -83,8 +83,7 @@ def with_change(base, change):
     return body
 
 
-with open(os.path.join(HERE, "..", "tests", "health_contract.json"), encoding="utf-8") as f:
-    OLD_CONTRACT = json.load(f)   # 0.9.13's examples: the new server must still take them
+OLD_SHAPES = [c for c in CONTRACT["health_valid"] if not c["name"].startswith("v2:")]    # 0.9.13's examples, kept in the file
 health_full = CONTRACT["health_valid"][0]["body"]
 report_ok = CONTRACT["report_valid"][0]["body"]
 
@@ -116,7 +115,7 @@ for case in CONTRACT["health_invalid"]:
     status, a = post("/api/health", with_change(health_full, case["change"]), ip=fresh())
     check(f"health invalid {case['field']}: {list(case['change'])[0]}", status == 400 and a.get("error") == case["field"])
 check("invalid health reports wrote nothing", everything() == before)
-for case in OLD_CONTRACT["health_valid"]:
+for case in OLD_SHAPES:
     body = dict(case["body"], id="e" + case["body"]["id"][1:])   # a new id: the shared examples above are already stored
     status, a = post("/api/health", body, ip=fresh())
     check(f"0.9.13 shape still accepted: {case['name']}", status == 200 and a == {"ok": True})

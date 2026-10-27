@@ -25,7 +25,7 @@ def check(name, ok):
     failures += not ok
 
 
-contract = json.loads((Path(__file__).parent / "health_contract.json").read_text(encoding="utf-8"))
+contract = json.loads((Path(__file__).parent / "health_contract_v2.json").read_text(encoding="utf-8"))
 TODAY = contract["today"]
 full = next(c["body"] for c in contract["health_valid"] if c["name"] == "full")
 
@@ -86,7 +86,8 @@ tomorrow_log = log
 body = tomorrow_log.body("2026-10-25", "0123456789abcdef")
 check("a finished day's body passes the check", body is not None and healthlog.bad_field(body, "2026-10-26") is None)
 allowed = {"id", "version", "day", "os", "screens", "game", "capture", "tesseract", "seconds_tracking", "looks", "exp",
-           "level", "map", "class", "mesos", "potions", "errors", "ms", "shadow"}
+           "level", "map", "class", "mesos", "potions", "errors", "ms", "shadow", "ui", "shadow_mesos", "shadow_party",
+           "shadow_why"}
 check("the body has only contract keys", set(body) <= allowed)
 check("the body holds the day's game size, tracking time and speed", body["game"] == {"w": 5120, "h": 2880, "fullscreen": True, "gh": 28.0}
       and body["seconds_tracking"] == 13 and body["ms"]["look_avg"] == 20.0 and 20 <= body["ms"]["look_p95"] <= 30
@@ -654,6 +655,162 @@ fresh()
 log = new_log()
 log.snapshot("0.9.14-beta", "Windows 10", [(1920, 1080, 100)], "screen", "ok")
 check("...a day with neither looks nor exceptions still isn't", log.body("2026-10-25", "0123456789abcdef") is None)
+
+# ---- 0.9.14: UI size and layout, the mesos and party shadows, EXP's old_only reasons (PLAN 4.7, decision 25)
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10.0.26200", [(2560, 1440, 100)], "window", "ok")
+log.look("read", ms=20.0)
+body = log.body("2026-10-25", HID)
+check("no new key in the body until something new was counted (an old overlay's shape)",
+      not any(k in body for k in healthlog.V2_KEYS) and set(body.get("ms", {})) <= {"look_avg", "look_p95", "v2_avg"})
+looks_in = (("default", "keyboard"), ("default", "keyboard"), ("ideal", "controller-standard"), ("ideal", "controller-cross"),
+            (None, None), ("sideways", "pages"), ("default", None))
+for ui, layout in looks_in:
+    log.look("read", ms=20.0, ui=ui, layout=layout)
+body = log.body("2026-10-25", HID)
+check("looks are counted by UI size and by layout (both kinds of controller layout are 'controller'; unknown counts nothing)",
+      body["ui"] == {"default": 3, "ideal": 2, "keyboard": 2, "controller": 2} and healthlog.bad_field(body, "2026-10-26") is None)
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10.0.26200", [(2560, 1440, 100)], "window", "ok")
+for i, (part, cat, ms) in enumerate((("mesos", "agree", 4.0), ("mesos", "agree", 6.0), ("mesos", "v2_only", None), ("party", "old_only", 1.0),
+                                     ("party", "neither", 3.0), ("party", "skipped", None), ("party", "nonsense", 1.0),
+                                     ("map", "agree", 1.0))):
+    log.look("read", ms=20.0, shadows=((part, cat, ms),))
+log.look("read", ms=20.0, shadows=(("mesos", "disagree", 5.0), ("party", "errors", None)))
+body = log.body("2026-10-25", HID)
+check("the mesos and party shadows are counted by category in their own keys (an unknown category or part counts nothing)",
+      body["shadow_mesos"] == {"agree": 2, "disagree": 1, "v2_only": 1, "old_only": 0, "neither": 0, "skipped": 0, "errors": 0}
+      and body["shadow_party"] == {"agree": 0, "disagree": 0, "v2_only": 0, "old_only": 1, "neither": 1, "skipped": 1, "errors": 1}
+      and "shadow" not in body)
+check("...and their times go in ms (mean over the looks that ran), but only next to the usual look times",
+      body["ms"]["mesos_v2_avg"] == 5.0 and body["ms"]["party_v2_avg"] == 2.0 and "v2_avg" not in body["ms"]
+      and healthlog.bad_field(body, "2026-10-26") is None)
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10.0.26200", [], "screen", "ok")
+for shadow_, why in ((("old_only", 5.0), "not_found"), (("old_only", 5.0), "not_found"), (("old_only", 5.0), "unclear"),
+                     (("old_only", 5.0), "ok"), (("old_only", 5.0), None), (("agree", 5.0), "not_found"), (("v2_only", 5.0), "unclear")):
+    log.look("read", ms=20.0, shadow=shadow_, why=why)
+body = log.body("2026-10-25", HID)
+check("EXP's old_only looks are counted by why v2 didn't read (other categories and other reasons count nothing)",
+      body["shadow_why"] == {"not_found": 2, "unclear": 1} and body["shadow"]["old_only"] == 5)
+log.save()
+again = new_log().body("2026-10-25", HID)
+check("the new counts survive a restart", again["shadow_why"] == body["shadow_why"] and "ui" not in again)
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10.0.26200", [], "screen", "ok")
+log.look("read", ui="ideal", layout="keyboard", shadow=("old_only", 1.0), why="unclear")
+log.today()["ui"]["ideal"] = 10 ** 6
+log.today()["why"]["unclear"] = 10 ** 6
+body = log.body("2026-10-25", HID)
+check("a count above the looks is cut to the looks (the site refuses it, and a day must never be lost to a slip)",
+      body is not None and body["ui"]["ideal"] == 1 and body["shadow_why"]["unclear"] == 1)
+rec = log.today()
+rec["ui"] = {"default": "x", "ideal": -3, "keyboard": "1.5", "controller": None}
+rec["shadow_mesos"] = "not a dict"
+fresh_rec = healthlog.HealthLog._clean(json.loads(json.dumps(rec)))
+check("a damaged record (a file edited by hand) is cleaned back to zeros", fresh_rec["ui"] == {k: 0 for k in healthlog.UI_KEYS}
+      and fresh_rec["shadow_mesos"] == {k: 0 for k in healthlog.SHADOW_KEYS})
+old_day = {"looks": 3, "exp": {"read": 3}, "snap": {}, "shadow": {"agree": 3}, "sent": False}
+cleaned = healthlog.HealthLog._clean(old_day)
+check("a day saved by 0.9.13 (none of the new keys) loads with them at zero",
+      cleaned["ui"] == {k: 0 for k in healthlog.UI_KEYS} and cleaned["shadow_party"]["agree"] == 0 and cleaned["shadow"]["agree"] == 3)
+
+# every body the overlay builds passes the contract, however the counts fall (made-up days)
+rnd_ = random.Random(11)
+bad_bodies, sizes = 0, []
+for n in range(300):
+    fresh()
+    log = new_log()
+    log.snapshot("0.9.14-beta", "Windows 10.0.26200", [(1920, 1080, 100)], "screen", "ok")
+    for _ in range(rnd_.choice([1, 5, 60])):
+        log.look(rnd_.choice(healthlog.EXP_KINDS), rnd_.random() < .3, ms=rnd_.choice([None, 5.0, 40.0]),
+                 shadow=rnd_.choice([None, ("old_only", 4.0), ("agree", 4.0), ("errors", None)]),
+                 ui=rnd_.choice([None, "default", "ideal"]), layout=rnd_.choice([None, "keyboard", "controller-cross"]),
+                 shadows=tuple((p, rnd_.choice(healthlog.SHADOW_KEYS), rnd_.choice([None, 2.0, 7.5])) for p in rnd_.sample(["mesos", "party"], rnd_.choice([0, 1, 2]))),
+                 why=rnd_.choice([None, "not_found", "unclear", "ok"]))
+    got = log.body("2026-10-25", HID)
+    if got is None or healthlog.bad_field(got, "2026-10-26") is not None:
+        bad_bodies += 1
+    else:
+        sizes.append(len(json.dumps(got, separators=(",", ":")).encode()))
+check("300 made-up days with every new count: every body passes the contract's rules and the size cap", bad_bodies == 0 and max(sizes) <= 4096)
+fresh()
+log = new_log()
+log.snapshot("10.20.30-beta.2", "Windows é" * 20, [(20000, 20000, 500)] * 4, "region", "no_eng")
+rec = log.today()
+for k in healthlog.EXP_KINDS:
+    rec["exp"][k] = 30000
+rec["looks"] = 180000
+rec["ms_total"], rec["ms_n"] = 10 ** 9, 1
+rec["games"] = {"20000x20000/1/63.9": 5}
+for key in ("ui", "why", "shadow_mesos", "shadow_party"):
+    rec[key] = {k: 10 ** 9 for k in rec[key]}
+for p in healthlog.SHADOW_PARTS:
+    rec[f"{p}_v2_ms"], rec[f"{p}_v2_n"] = 10 ** 12, 1
+rec["shadow"] = {k: 10 ** 9 for k in healthlog.SHADOW_KEYS}
+rec["v2_ms"], rec["v2_n"] = 10 ** 12, 1
+big = log.body("2026-10-25", HID)
+check("the biggest possible day with every new key is valid and within 4,096 bytes",
+      big is not None and healthlog.bad_field(big, "2026-10-26") is None and len(json.dumps(big, separators=(",", ":")).encode()) <= 4096)
+
+# the contract's v2 bodies each have their own id here (the site answers a repeat with the same id and day as "dup")
+ids = {c["body"]["id"] for c in contract["health_valid"]}
+check("the contract's valid bodies share ids (so a test that sends them has to give each its own)", len(ids) < len(contract["health_valid"]))
+
+# ---- decision 25: a site that doesn't know the new keys yet makes the day wait, never dropped
+v2_body = next(c["body"] for c in contract["health_valid"] if c["name"].startswith("v2: every new key"))
+plain_body = next(c["body"] for c in contract["health_valid"] if c["name"] == "full")
+ms_body = {**copy.deepcopy(plain_body), "ms": {**plain_body["ms"], "mesos_v2_avg": 3.5}} if "ms" in plain_body else None
+os.environ["MAPLE_EXP_ALLOW_SHARE"] = "1"
+real_urlopen = m.urllib.request.urlopen
+try:
+    def old_site(field):
+        def urlopen(request, timeout=0):
+            raise m.urllib.error.HTTPError(request.full_url, 400, "x", {}, Answer({"error": field}))
+        return urlopen
+    for key in healthlog.V2_KEYS:
+        m.urllib.request.urlopen = old_site(key)
+        check(f"an older site refusing the new key '{key}' by name is 'later' (the day waits)",
+              m.post_health({**copy.deepcopy(plain_body), key: v2_body[key]}) == ("later", key))
+    m.urllib.request.urlopen = old_site("ui")
+    check("a refusal of 'ui' on a body that has no 'ui' is a real refusal", m.post_health(plain_body) == ("bad", "ui"))
+    m.urllib.request.urlopen = old_site("id")
+    check("a refusal of another field is still 'bad' (new keys or not)", m.post_health(v2_body) == ("bad", "id"))
+    m.urllib.request.urlopen = old_site("shadow")
+    check("...even one that is an old key", m.post_health(v2_body) == ("bad", "shadow"))
+    if ms_body:
+        m.urllib.request.urlopen = old_site("ms")
+        check("an older site refusing 'ms' because it holds the new mesos_v2_avg is 'later'", m.post_health(ms_body) == ("later", "ms"))
+        check("...but 'ms' on a body with only the old ms keys is 'bad'", m.post_health(plain_body) == ("bad", "ms"))
+finally:
+    m.urllib.request.urlopen = real_urlopen
+    os.environ.pop("MAPLE_EXP_ALLOW_SHARE")
+fresh()
+clock[0] = float(calendar.timegm((2026, 10, 25, 12, 0, 0)))
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10.0.26200", [(1920, 1080, 100)], "screen", "ok")
+log.look("read", ui="default", layout="keyboard", shadows=(("mesos", "agree", 3.0),))
+clock[0] += 86400
+day, body = log.due(HID)
+log.attempting()
+log.finish(day, "later")
+check("'later' from an older site keeps the day (not sent, not dropped) and waits for tomorrow",
+      not log.days[day]["sent"] and log.due(HID) is None and log.body(day, HID) is not None)
+clock[0] = log.retry_after + 3601
+check("...and the day is due again, with the new keys, once the site is updated", (log.due(HID) or (None, {}))[1].get("ui") is not None)
+fake = types.SimpleNamespace(_health_sending=True, healthlog=log)
+m.App._health_done(fake, day, "later", "ui")
+check("the overlay notes in errors.log that the site doesn't know the key yet, and the day still waits",
+      not fake._health_sending and not log.days[day]["sent"] and "doesn't know the health field ui" in m.ERROR_LOG_PATH.read_text(encoding="utf-8"))
+
+# ---- the Reading carries the new fields (old code that builds a Reading without them keeps working)
+rd = m.Reading("x")
+check("a Reading has no UI size, layout or part shadows until a reader sets them",
+      rd.ui is None and rd.layout is None and rd.shadows == () and rd.shadow_why is None)
 
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
