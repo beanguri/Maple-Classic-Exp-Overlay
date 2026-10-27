@@ -118,5 +118,113 @@ for c in new["health_valid"]:
     check(f"'{c['name']}': every new count is at most 'looks'",
           all(v <= b["looks"] for k in ("ui", "shadow_why") if k in b for v in b[k].values()))
 
+# ---- the glyph engine and the potion count font (ticket 05): counts drawn from the font itself over made-up slots
+import numpy as np  # noqa: E402
+import glyphs  # noqa: E402
+
+COUNT_FONT = glyphs.Font.load("potion_count")
+SCALES = (1.0, 1080 / 768, 1200 / 768, 1440 / 768, 2.0, 2160 / 768, 2880 / 768)     # every size of the game
+PLATE, FRAME = (250, 249, 248), (50, 45, 40)
+
+
+def fake_slot(text, scale, back=PLATE, dx=0.37, dy=0.61, font=None, kernel=None, style="keyboard", cover=None, window=None):
+    """A picture with one potion slot (light plate, dark frame around it) and `text` drawn where the game puts a
+    count, smoothed (or copied block for block at a whole step) as the game scales. -> (picture, rect)."""
+    w, h = int(round(32 * scale)), int(round(31 * scale))
+    x, y = int(round(10 * scale)), int(round(8 * scale))
+    pic = np.zeros((int(y + h + 10 * scale), int(x + w + 36 * scale), 3), np.float32)
+    pic[:] = FRAME
+    pic[y:y + h, x:x + w] = PLATE
+    pic[y + int(0.15 * h):y + int(0.95 * h), x:x + int(0.75 * w)] = back          # an icon behind the count
+    ox, oy = COUNT_FONT.styles[style]["origin"]
+    if text:
+        p = glyphs.draw(font or COUNT_FONT, text, scale, x + (ox + dx) * scale, y + h + (oy + dy) * scale, pic.shape[:2],
+                        kernel or ("point" if abs(scale - round(scale)) < 0.01 else "bilinear"))
+        pic = pic * (1 - p[0])[:, :, None] + np.transpose(p[1:], (1, 2, 0))
+    if cover:                                          # a dark box over the left part of the count
+        pic[int(y + 0.5 * h):int(y + h), x:x + int(cover * w)] = 60
+    if window:                                         # another window over the right part of the slot, its edge too
+        pic[:, int(x + window * w):] = (215, 205, 200)
+    return np.clip(np.round(pic), 0, 255).astype(np.uint8), (x, y, w, h)
+
+
+def count_of(text, scale, **kw):
+    pic, rect = fake_slot(text, scale, **kw)
+    return glyphs.read_count(pic, rect, scale)[0]
+
+
+backs = {"plate": PLATE, "dark icon": (30, 30, 120), "lemon": (20, 230, 250), "grey": (120, 118, 116)}
+good = total = 0
+for scale in SCALES:
+    for text in ("0", "7", "23", "305", "4096", "9999", "1234", "888", "381", "1000"):
+        for name, back in backs.items():
+            got = count_of(text, scale, back=back)
+            total += 1
+            good += got == int(text)
+            if got != int(text):
+                print(f"   {text} at {scale:.4f} over {name}: read {got}")
+check(f"counts of 1 to 4 digits are read exactly at every size, over any back ({good}/{total})", good == total)
+
+wrong = 0
+for scale in SCALES:
+    for d in "0123456789":
+        text = d * 2 if d != "0" else "10"
+        got = count_of(text, scale)
+        wrong += got is not None and got != int(text)
+check("no digit is ever read as another (every digit twice, every size)", wrong == 0)
+check("a whole step smoothed (UI Size Default at 1536 tall) reads too, not only block for block",
+      count_of("306", 2.0, kernel="bilinear") == 306)
+
+
+# Any size, any sub-pixel position, any count: a seeded handful of random cases (the exact answer, never another)
+import random  # noqa: E402
+rnd = random.Random(7)
+icons = list(backs.values()) + [(200, 160, 90), (40, 60, 200)]
+bad = unknown = 0
+for _ in range(300):
+    scale = rnd.choice(SCALES)
+    digits = rnd.choice((1, 2, 3, 3, 4))
+    text = str(rnd.randint(10 ** (digits - 1) if digits > 1 else 0, 10 ** digits - 1))
+    got = count_of(text, scale, back=rnd.choice(icons), dx=rnd.uniform(-1, 1), dy=rnd.uniform(-1, 1))
+    bad += got is not None and got != int(text)
+    unknown += got is None
+check(f"300 random counts at random positions and sizes: none read wrong, under 2% missed ({bad} wrong, {unknown} missed)",
+      bad == 0 and unknown <= 6)
+
+# What must never be read as a count
+yellow = glyphs.Font({"name": "yellow", "fill": [[0, 255, 255]] * COUNT_FONT.rows,
+                      "outline": {"rule": "cross", "color": [0, 0, 0]},
+                      "glyphs": {d: {"rows": ["".join("X" if c else "." for c in r) for r in COUNT_FONT.glyphs[d]],
+                                     "adv": COUNT_FONT.adv[d]} for d in COUNT_FONT.chars}})
+check("a yellow skill cooldown, same shapes, is never taken for a count (every size)",
+      all(count_of("22", s, font=yellow) is None for s in SCALES))
+check("an empty slot gives no number", all(count_of("", s) is None for s in SCALES))
+pic, rect = fake_slot("", 1.4)
+pic[:] = np.random.RandomState(5).randint(0, 256, pic.shape)
+check("noise gives no number", glyphs.read_count(pic, rect, 1.4)[0] is None)
+for s in (1.0, 1080 / 768, 2.0, 3.75):
+    check(f"a count with its left part covered gives no number (scale {s:.2f})", count_of("253", s, cover=0.6) is None)
+    check(f"a window over the slot's right part, hiding the last digit, gives no number (scale {s:.2f})",
+          count_of("253", s, window=0.57) is None and count_of("253", s) == 253)
+check("a count can't start with a 0 (except 0 itself)", count_of("05", 1.4) is None and count_of("0", 1.4) == 0)
+
+# A spot that read once is checked first next time (the slot didn't move): same answer, far less work
+pic, rect = fake_slot("23", 1.4)
+got, run = glyphs.read_count(pic, rect, 1.4)
+got2, run2 = glyphs.read_count(fake_slot("24", 1.4)[0], rect, 1.4, hint=run)
+check("a hint from the last look gives the new number at the same spot",
+      got == 23 and got2 == 24 and (run2.tx, run2.ty) == (run.tx, run.ty))
+pic3, rect3 = fake_slot("24", 1.4, dx=2.0, dy=-1.0)
+got3, run3 = glyphs.read_count(pic3, rect3, 1.4, hint=run)
+check("a hint that no longer fits is dropped and the slot is read afresh",
+      got3 == 24 and (run3.tx, run3.ty) != (run.tx, run.ty))
+
+# The font asset itself
+check("the count font has the ten digits, 9 rows each, and only 1 is narrower than the others",
+      COUNT_FONT.chars == "0123456789" and all(COUNT_FONT.glyphs[d].shape[0] == 9 for d in COUNT_FONT.chars)
+      and [d for d in COUNT_FONT.chars if COUNT_FONT.adv[d] != 8] == ["1"])
+check("the count font says where the text sits in both slot styles", set(COUNT_FONT.styles) == {"keyboard", "controller"})
+
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
