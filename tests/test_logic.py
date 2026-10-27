@@ -1423,84 +1423,284 @@ def bar(*items):
     return [potions.Slot(i % 4, i // 4, name, count) for i, (name, count) in enumerate(items)]
 
 
+def seen(s, slots, after=3):
+    """A look at the potion bar `after` seconds after the last one (the overlay looks every 3 s)."""
+    clock[0] += after
+    s.look_at_bar(slots, clock[0])
+
+
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Lemon", 326)))
-s.look_at_bar(bar(("Lemon", 325)))
+seen(s, bar(("Lemon", 326)))
+seen(s, bar(("Lemon", 325)))
 check(f"Lemon 326 to 325 is exactly one Lemon used ({s.potions.used})", s.potions.used == {"Lemon": 1})
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
 for n in (40, 39, 90, 89):
-    s.look_at_bar(bar(("Red Potion", n)))
+    seen(s, bar(("Red Potion", n)))
 check(f"a count going up (buying, looting) isn't a use, and the slot starts from the new count ({s.potions.used})",
       s.potions.used == {"Red Potion": 2})
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Orange", 20), ("Blue Potion", 100), ("Red Potion", 50)))
-s.look_at_bar(bar(("Orange", 19), ("Blue Potion", 97), ("Red Potion", 50)))
+seen(s, bar(("Orange", 20), ("Blue Potion", 100), ("Red Potion", 50)))
+seen(s, bar(("Orange", 19), ("Blue Potion", 97), ("Red Potion", 50)))
 check(f"several slots changing between two looks are each counted ({s.potions.used})",
       s.potions.used == {"Orange": 1, "Blue Potion": 3})
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Red Potion", 100)))
+seen(s, bar(("Red Potion", 100)))
 s.pause()
-s.look_at_bar(bar(("Red Potion", 90)))
+seen(s, bar(("Red Potion", 90)))
 s.start(clock[0])
 gains(s, 3.5)
-s.look_at_bar(bar(("Red Potion", 90)))
+seen(s, bar(("Red Potion", 90)))
 check(f"potions used while paused aren't counted ({s.potions.used})", not s.potions.used)
-s.look_at_bar(bar(("Red Potion", 89)))
+seen(s, bar(("Red Potion", 89)))
 check(f"...and counting carries on from the count when tracking resumed ({s.potions.used})", s.potions.used == {"Red Potion": 1})
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Red Potion", 100)))
+seen(s, bar(("Red Potion", 100)))
 s.map_seen("Henesys")                               # a town trip: tracking waits
-s.look_at_bar(bar(("Red Potion", 300)))             # (bought a lot)
+seen(s, bar(("Red Potion", 300)))             # (bought a lot)
 s.map_seen("Rocky Road II")
 gains(s, 6.5)
-s.look_at_bar(bar(("Red Potion", 300)))
-s.look_at_bar(bar(("Red Potion", 298)))
+seen(s, bar(("Red Potion", 300)))
+seen(s, bar(("Red Potion", 298)))
 check(f"a trip to town doesn't count: only what's used after carrying on ({s.potions.used})", s.potions.used == {"Red Potion": 2})
 
 s = session()
 gains(s, 10)
-s.look_at_bar(bar(("Red Potion", 100)))
-s.look_at_bar(bar(("Red Potion", 99)))
+seen(s, bar(("Red Potion", 100)))
+seen(s, bar(("Red Potion", 99)))
 check("nothing counts before Start", not s.potions.used)
 s.start(clock[0])
-s.look_at_bar([])
-s.look_at_bar(bar(("Scroll", None)))
+seen(s, [])
+seen(s, bar(("Scroll", None)))
 check("a bar with no consumables (or no readable count) does nothing", not s.potions.used)
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Red Potion", 100)))
-s.look_at_bar(bar(("Red Potion", 6)))               # a misread, or a real flood of use?
-s.look_at_bar(bar(("Red Potion", 100)))
+seen(s, bar(("Red Potion", 100)))
+seen(s, bar(("Red Potion", 6)))               # a misread, or a real flood of use?
+seen(s, bar(("Red Potion", 100)))
 check(f"a big drop that doesn't last is a misread, not use ({s.potions.used})", not s.potions.used)
-s.look_at_bar(bar(("Red Potion", 60)))
-s.look_at_bar(bar(("Red Potion", 60)))
+seen(s, bar(("Red Potion", 60)), 15)                  # (40 in 15 s is something drinking can do)
+seen(s, bar(("Red Potion", 60)))
 check(f"a big drop that is seen again is use ({s.potions.used})", s.potions.used == {"Red Potion": 40})
 
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Red Potion", 100), ("Orange Potion", 50), ("Blue Potion", 80), ("Mystery Food", 9)))
-s.look_at_bar(bar(("Red Potion", 97), ("Orange Potion", 48), ("Blue Potion", 79), ("Mystery Food", 8)))
+seen(s, bar(("Red Potion", 100), ("Orange Potion", 50), ("Blue Potion", 80), ("Mystery Food", 9)))
+seen(s, bar(("Red Potion", 97), ("Orange Potion", 48), ("Blue Potion", 79), ("Mystery Food", 8)))
 PRICES = {"Red Potion": 50, "Orange Potion": 150, "Blue Potion": 220}
 check(f"mesos spent on potions: each kind at its own price, an item with no price costs 0 ({s.potions.cost(PRICES)})",
       s.potions.cost(PRICES) == 3 * 50 + 2 * 150 + 220)
 check("no prices at all costs nothing", s.potions.cost({}) == 0)
+
+# ---- potion counting rules (v2): stacks, layout flips, out of sight, drinking speed, money windows
+import potion_bar  # noqa: E402
+
+
+def plook(layout="keyboard", **slots):
+    """A PotionLook from s<index>=(name, count): None is an empty slot, (name, None) an unreadable count."""
+    style = "keyboard" if layout == "keyboard" else "controller"
+    reads = tuple(potion_bar.SlotRead(int(k[1:]), None, style, *((v[0], "consumable", v[1]) if v else (None, "empty", None)))
+                  for k, v in slots.items())
+    return potion_bar.PotionLook(True, layout, "default", 1.0, reads)
+
+
+class Watch:
+    """A tracker with its own clock: look() moves it on `after` seconds (the overlay looks every 3 s)."""
+
+    def __init__(self):
+        self.t, self.now = potions.PotionTracker(), 1000.0
+
+    def look(self, look, after=3, counting=True, window=False):
+        self.now += after
+        self.t.observe(look, counting, self.now, window)
+        return self.t.used
+
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 50)))
+w.look(plook(s0=("Red Potion", 99), s1=("Red Potion", 48)))
+check(f"two look-alike stacks in one layout are each their own stack ({w.t.used})", w.t.used == {"Red Potion": 3})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))
+w.look(plook("controller-cross", s3=("Red Potion", 99), s5=("Blue Potion", 50)))
+check(f"a flip to the other layout finds each stack by item and count: one Red used ({w.t.used})", w.t.used == {"Red Potion": 1})
+w.look(plook("controller-cross", s3=("Red Potion", 98), s5=("Blue Potion", 49)))
+w.look(plook(s0=("Red Potion", 98), s1=("Blue Potion", 49)))
+check(f"...and back again, nothing is lost or counted twice ({w.t.used})", w.t.used == {"Red Potion": 2, "Blue Potion": 1})
+w.look(plook(s0=("Red Potion", 97), s1=("Blue Potion", 49)))
+w.look(plook("controller-cross", s3=("Red Potion", 97), s5=("Blue Potion", 49)))
+check(f"...with the same stacks in the same slots each time ({w.t.used})", w.t.used == {"Red Potion": 3, "Blue Potion": 1})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 50)))
+w.look(plook("controller-cross", s2=("Red Potion", 50), s4=("Red Potion", 99)))
+check(f"a flip with two look-alike stacks of different counts: the match is by count ({w.t.used})", w.t.used == {"Red Potion": 1})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 50)))
+w.look(plook("controller-cross", s2=("Red Potion", 49), s3=("Red Potion", 99)))
+check(f"a flip with two look-alike stacks that both changed is ambiguous: nothing counts ({w.t.used})", not w.t.used)
+w.look(plook("controller-cross", s2=("Red Potion", 49), s3=("Red Potion", 98)))
+check(f"...and it starts over from there ({w.t.used})", w.t.used == {"Red Potion": 1})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))
+w.look(plook("controller-cross", s3=("Blue Potion", 50)))                    # Red is out of sight
+w.look(plook("controller-cross", s3=("Blue Potion", 50)), after=6)
+w.look(plook("controller-cross", s3=("Blue Potion", 50), s4=("Red Potion", 97)))
+check(f"a stack out of sight keeps its count: the drop is counted when it returns ({w.t.used})", w.t.used == {"Red Potion": 3})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook(s0=("Red Potion", None)))                                       # in its slot, count unreadable
+w.look(plook(s0=("Red Potion", 98)))
+check(f"an unreadable count keeps the old count ({w.t.used})", w.t.used == {"Red Potion": 2})
+
+w = Watch()
+w.look(plook("controller-cross", s2=("Red Potion", 100)))
+w.look(plook("controller-cross", s2=("Blue Potion", 50)))                    # the trigger's other set: new items, same spots
+w.look(plook("controller-cross", s2=("Red Potion", 99)))
+check(f"the same spot holding another item (the trigger's second set) isn't the old stack ({w.t.used})",
+      w.t.used == {"Red Potion": 1})
+
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 100)))                # a second stack of the same item shows up
+w.look(plook(s0=("Red Potion", 99), s1=("Red Potion", 100)))
+check(f"a stack that shows up beside another of the same item is kept apart ({w.t.used})", w.t.used == {"Red Potion": 1})
+
+# out of sight, then tracking is cut: pause, Reset, map change, idle pause (through the Session, which clears the tracker)
+for how in ("pause", "reset", "map", "idle"):
+    s = session()
+    s.start(clock[0])
+    gains(s, 30)
+    seen(s, bar(("Red Potion", 100)))
+    seen(s, [])                                                              # the bar is out of sight
+    if how == "pause":
+        s.pause()
+    elif how == "reset":
+        s.reset()
+    elif how == "map":
+        s.map_seen("Henesys")
+        s.map_seen("Rocky Road II")
+    else:
+        clock[0] += 20
+        s.tick(clock[0])
+    seen(s, bar(("Red Potion", 94)))                                         # back, lower
+    if how in ("pause", "reset"):
+        for _ in range(2 if how == "reset" else 0):                         # (Reset forgets the level)
+            s.observe([(EXP0, round(EXP0 / 95700 * 100, 2))], True, clock[0])
+        s.start(clock[0])
+        gains(s, 30)
+    elif how == "map":
+        gains(s, 30)
+    else:
+        gains(s, 12)
+    seen(s, bar(("Red Potion", 94)))
+    seen(s, bar(("Red Potion", 93)))
+    check(f"out of sight across a {how}: what it lost meanwhile isn't counted, only what's used after ({s.potions.used})",
+          s.potions.used == {"Red Potion": 1})
+s = session()
+s.start(clock[0])
+gains(s, 30)
+seen(s, bar(("Red Potion", 100)))
+seen(s, [])
+seen(s, bar(("Red Potion", 94)), 9)
+check(f"...but out of sight while tracking ran the whole time it is counted ({s.potions.used})", s.potions.used == {"Red Potion": 6})
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook(s0=("Red Potion", 99)), after=65)
+check(f"...unless no look at all was made for a long while (the game was closed) ({w.t.used})", not w.t.used)
+
+# drinking speed: a drop bigger than rate x time since the stack was last counted starts over
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook(s0=("Red Potion", 90)), after=1)                                # 10 in 1 s: too fast
+check(f"10 gone in one second isn't drinking ({w.t.used})", not w.t.used)
+w.look(plook(s0=("Red Potion", 78)), after=3)                                # 12 in 3 s is the limit
+w.look(plook(s0=("Red Potion", 78)), after=3)
+check(f"...12 in three seconds is, once seen twice ({w.t.used})", w.t.used == {"Red Potion": 12})
+w.look(plook(s0=("Red Potion", 65)), after=3)                                # 13 in 3 s: no
+check(f"...13 in three seconds isn't ({w.t.used})", w.t.used == {"Red Potion": 12})
+w = Watch()
+w.look(plook(s0=("Red Potion", 500)))
+w.look(plook("controller-cross", s1=("Blue Potion", 9)), after=600)
+w.look(plook(s0=("Red Potion", 255), s1=("Blue Potion", 9)), after=3)
+w.look(plook(s0=("Red Potion", 255), s1=("Blue Potion", 9)), after=3)
+check(f"even after ten minutes, no more than a minute of drinking can be counted ({w.t.used})", not w.t.used)
+
+# "26 for 326": a number misread by a digit never counts, however it repeats
+w = Watch()
+w.look(plook(s0=("Lemon", 326)))
+for n in (26, 26, 326, 26, 326, 26, 26, 26, 326):
+    w.look(plook(s0=("Lemon", n)))
+check(f"326 read as 26, once or repeatedly, is never use ({w.t.used})", not w.t.used)
+w.look(plook(s0=("Lemon", 325)))
+check(f"...and a real use afterwards still counts ({w.t.used})", w.t.used == {"Lemon": 1})
+w = Watch()
+w.look(plook(s0=("Lemon", 326)))
+w.look(plook(s0=("Lemon", 26)), after=60)
+w.look(plook(s0=("Lemon", 26)), after=60)
+check(f"...also with a long time between the looks ({w.t.used})", not w.t.used)
+
+# a shop, storage or trade window starts everything over
+w = Watch()
+w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))
+w.look(plook(s0=("Red Potion", 95), s1=("Blue Potion", 50)), window=True)
+w.look(plook(s0=("Red Potion", 95), s1=("Blue Potion", 50)), window=True)
+w.look(plook(s0=("Red Potion", 94), s1=("Blue Potion", 50)))
+check(f"counts changing while a shop window is open aren't use, and counting goes on from there ({w.t.used})",
+      w.t.used == {"Red Potion": 1})
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook("controller-cross", s1=("Blue Potion", 50)), window=True)       # Red out of sight while a window is open
+w.look(plook(s0=("Red Potion", 94)))
+check(f"a stack out of sight during a money window starts over ({w.t.used})", not w.t.used)
+
+# 0 is a normal count; buying back up
+w = Watch()
+for n in (3, 2, 1, 0, 0):
+    w.look(plook(s0=("Red Potion", n)))
+check(f"a stack used up shows 0 and all of it counted ({w.t.used})", w.t.used == {"Red Potion": 3})
+w.look(plook(s0=("Red Potion", 50)))
+w.look(plook(s0=("Red Potion", 49)))
+check(f"...buying back up from 0 isn't use, the next drink is ({w.t.used})", w.t.used == {"Red Potion": 4})
+
+# the two-look confirmation and the undo
+w = Watch()
+w.look(plook(s0=("Red Potion", 100)))
+w.look(plook(s0=("Red Potion", 80)), after=15)
+check(f"a drop bigger than 10 waits for a second look ({w.t.used})", not w.t.used)
+w.look(plook(s0=("Red Potion", 80)))
+check(f"...and is use when seen again ({w.t.used})", w.t.used == {"Red Potion": 20})
+w = Watch()
+for n in (326, 320, 326):
+    w.look(plook(s0=("Lemon", n)))
+check(f"a small misread that is gone at the next look is taken back ({w.t.used})", sum(w.t.used.values()) == 0)
+
+# today's reader's answer is the same thing as a keyboard look
+legacy = potions.look_from_slots(bar(("Red Potion", 100), ("Blue Potion", None), ("Lemon", 5), ("Orange", 7), ("Sap", 3)))
+check("today's reader's answer becomes a keyboard-layout look (4 to a row)",
+      legacy.seen and legacy.layout == "keyboard" and [s.index for s in legacy.slots] == [0, 1, 2, 3, 4]
+      and legacy.slots[4].count == 3 and legacy.slots[1].count is None)
+check("...and an empty answer is a look with no bar", not potions.look_from_slots(()).seen)
 
 # ---- potion prices: the shipped defaults, the player's own prices on top
 ITEMS = {"Red Potion": {"price": 50, "unpriced": False}, "Blue Potion": {"price": 220, "unpriced": False},
@@ -1676,19 +1876,19 @@ check(f"an idle pause and then leaving the map makes the mesos count stale ({s.w
 s = session()
 s.start(clock[0])
 gains(s, 30)
-s.look_at_bar(bar(("Lemon", 100)))
-s.look_at_bar([potions.Slot(1, 0, "Lemon", 100)])          # the stack dragged one slot to the right
-s.look_at_bar([potions.Slot(1, 0, "Lemon", 95)])
-s.look_at_bar(bar(("Lemon", 95)))                          # ...and back
-s.look_at_bar(bar(("Lemon", 95)))
+seen(s, bar(("Lemon", 100)))
+seen(s, [potions.Slot(1, 0, "Lemon", 100)])          # the stack dragged one slot to the right
+seen(s, [potions.Slot(1, 0, "Lemon", 95)])
+seen(s, bar(("Lemon", 95)))                          # ...and back
+seen(s, bar(("Lemon", 95)))
 check(f"a stack moved and moved back counts only what was used ({s.potions.used})", s.potions.used == {"Lemon": 5})
 s = session()
 s.start(clock[0])
 gains(s, 30)
 for n in (326, 320, 326):
-    s.look_at_bar(bar(("Lemon", n)))
+    seen(s, bar(("Lemon", n)))
 check(f"a count misread lower for one look, then back, is no use ({s.potions.used})", sum(s.potions.used.values()) == 0)
-s.look_at_bar(bar(("Lemon", 325)))
+seen(s, bar(("Lemon", 325)))
 check("...a real use afterwards still counts", sum(s.potions.used.values()) == 1)
 
 log, _ = new_log()
