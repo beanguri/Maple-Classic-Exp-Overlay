@@ -3263,9 +3263,13 @@ class Session:
             t.start()
         return result
 
-    def look_at_bar(self, slots):
-        """Feeds a look at the potion bar: what went down since the last look was used."""
-        self.potions.observe(slots, self.exp.running)
+    def look_at_bar(self, look, now, window=None):
+        """Feeds a look at the potion bar (a potions.PotionLook; today's reader still hands over a tuple of
+        potions.Slot): what went down since the last look was used. `window` is the shop, storage or trade
+        window open at the look, if any."""
+        if not isinstance(look, potions.PotionLook):
+            look = potions.look_from_slots(look)
+        self.potions.observe(look, self.exp.running, now, bool(window))
 
     def map_blind(self):
         """The minimap's name has been out of sight for a while (hidden, covered, or the game
@@ -5538,7 +5542,7 @@ class App:
         if r.bar is not None:
             self.potion_bar = r.bar
             if self.cfg["potions_on"]:
-                self.session.look_at_bar(r.bar)
+                self.session.look_at_bar(r.bar, now, r.window)
             else:
                 self.session.potions.pause()            # (switched on again later: nothing used meanwhile counts)
         self.meso.set_window(r.window, now)             # mesos moved at these windows aren't earned

@@ -17,6 +17,8 @@ from collections import namedtuple
 import cv2
 import numpy as np
 
+from potion_bar import PotionLook, SlotRead
+
 Slot = namedtuple("Slot", "col row name count")      # count None: the icon is known, the number isn't
 
 # Where things are, measured on the 5120 x 2880 reference screen (the UI scales with window
@@ -316,14 +318,46 @@ def read_bar(img, scale, origin, table, digits, search=SEARCH):
 
 # ---------------------------------------------------------------- potions used
 MAX_STEP = 10               # a drop in one look bigger than this must be seen twice (a misread isn't use)
+DRINK_RATE = 4              # the most one stack can lose in a second (measured: 2.4 spamming a key, 2.75 holding it)
+RATE_SECONDS = (1.0, 60.0)  # a drop is judged over the time since the stack's last count: a look's worth at least, a minute at most
+LOOK_GAP = 60               # no look at all for this long: tracking was cut short (game closed, computer asleep)
+
+
+def allowed_drop(seconds):
+    """The most potions one stack can lose to drinking in `seconds`."""
+    low, high = RATE_SECONDS
+    return int(DRINK_RATE * min(max(seconds, low), high))
+
+
+def look_from_slots(slots):
+    """Today's reader's answer (Slot tuples) as a keyboard-layout PotionLook, so the tracker has one input."""
+    reads = tuple(SlotRead(s.row * 4 + s.col, None, "keyboard", s.name, "consumable", s.count) for s in slots)
+    return PotionLook(bool(reads), "keyboard", None, None, reads)
+
+
+class Stack:
+    """One potion stack: its item, its count at the last look that counted it (and when that was), and the
+    slot it sits in for each layout it has been seen in (none while it is out of sight)."""
+    __slots__ = ("item", "count", "seen", "at", "pending", "last_use")
+
+    def __init__(self, item, count, seen):
+        self.item, self.count, self.seen = item, count, seen
+        self.at = {}                          # layout -> slot index
+        self.pending = None                   # a big drop waiting to be seen a second time
+        self.last_use = None                  # (count after, count before) of the use at the last look
 
 
 class PotionTracker:
-    """Counts what's used from the bar: a slot's count going down is a use.
+    """Counts what's used from the bar: a stack's count going down is a use.
 
-    Each slot (by place and name) has a baseline, the count at the last look. A rise (buying,
-    looting) is no use and becomes the new baseline. Only looks made while tracking runs count;
-    any others just set the baselines, and a pause clears them, so town time never counts."""
+    A stack is told apart by its item and its count history, not by its place alone: in one layout each
+    slot is its own stack; when the bar flips to another layout (or an item is moved) a stack is found again
+    by its item and count, and when that is ambiguous nothing is counted for the item and it starts over.
+    A stack out of sight keeps its count. A rise (buying, looting) is no use and becomes the new count.
+    A drop bigger than drinking could explain since the stack was last counted (DRINK_RATE, at most a
+    minute's worth) is a move, a trade or a misread, so it starts over without counting. A look with a
+    shop, storage or trade window open starts everything over. Only looks made while tracking runs count;
+    any others just set the counts, and a pause clears them, so town time never counts."""
 
     def __init__(self):
         self.reset()
@@ -333,40 +367,89 @@ class PotionTracker:
         self.pause()
 
     def pause(self):
-        self.base = {}                        # (col, row, name) -> count at the last look
-        self.pending = {}                     # key -> a big drop waiting to be seen a second time
-        self.last_use = {}                    # key -> (count after, count before) of the use at the last look
+        self.stacks = []
+        self.last_look = None
 
     def cost(self, prices):
         """Mesos spent on what's been used, given {name: price} (an item without a price costs 0)."""
         return sum(n * prices.get(name, 0) for name, n in self.used.items())
 
-    def observe(self, slots, counting):
-        if slots:                             # a stack moved or gone: its old place has no say any more
-            here = {(s.col, s.row, s.name) for s in slots}
-            for key in [k for k in self.base if k not in here]:
-                self.base.pop(key)
-                self.pending.pop(key, None)
-                self.last_use.pop(key, None)
-        for s in slots:
-            if s.count is None:
+    def observe(self, look, counting, now, money_window=False):
+        """Feeds a PotionLook: `counting` is whether tracking runs, `now` the time in seconds, `money_window`
+        whether a shop, storage or trade window is open."""
+        if self.last_look is not None and now - self.last_look > LOOK_GAP:
+            self.stacks = []
+        self.last_look = now
+        if money_window:                      # counts move for other reasons there
+            self.stacks, counting = [], False
+        if not look.seen:
+            return
+        layout, here, fresh = look.layout, set(), []
+        for s in look.slots:
+            if s.kind in ("skill", "other", "empty"):
                 continue
-            key, count = (s.col, s.row, s.name), s.count
-            before = self.base.get(key)
-            if not counting or before is None or count >= before:
-                undo = self.last_use.pop(key, None)
-                if counting and undo and undo == (before, count):   # back to the count before a use: that was a misread
-                    self.used[s.name] -= count - before
-                self.base[key] = count
-                self.pending.pop(key, None)
+            if s.item is None:                # something is there that can't be named: leave its stack alone
+                here.add(s.index)
                 continue
-            if before - count > MAX_STEP and self.pending.get(key) != count:
-                self.pending[key] = count
-                continue
-            self.used[s.name] = self.used.get(s.name, 0) + before - count
-            self.last_use[key] = (count, before)              # (undone if the next look is `before` again)
-            self.base[key] = count
-            self.pending.pop(key, None)
+            stack = self._at(layout, s.index)
+            if stack is not None and stack.item == s.item:
+                here.add(s.index)
+                if s.count is not None:
+                    self._count(stack, s.count, counting, now)
+            elif s.count is not None:         # (a stack that was here is gone: found again below, by item and count)
+                fresh.append(s)
+        for stack in self.stacks:             # what left its slot has no place in this layout any more
+            if stack.at.get(layout) not in here:
+                stack.at.pop(layout, None)
+        loose = [st for st in self.stacks if layout not in st.at]
+        for item in dict.fromkeys(s.item for s in fresh):
+            self._place(layout, [st for st in loose if st.item == item], [s for s in fresh if s.item == item],
+                        counting, now)
+
+    def _at(self, layout, index):
+        return next((st for st in self.stacks if st.at.get(layout) == index), None)
+
+    def _place(self, layout, old, new, counting, now):
+        """Slots `new` hold an item that no stack in this layout sits in; `old` are its stacks out of sight."""
+        pairs = []
+        for s in list(new):                   # the same count: surely the same stack
+            same = next((st for st in old if st.count == s.count), None)
+            if same:
+                pairs.append((same, s))
+                old.remove(same)
+                new.remove(s)
+        if len(old) == 1 and len(new) == 1:   # one of each: the count moved by use (or a rise, or a misread)
+            pairs.append((old.pop(), new.pop()))
+        elif old and new:                     # which is which can't be told: start the item over
+            self.stacks = [st for st in self.stacks if st not in old]
+        for stack, s in pairs:
+            self._count(stack, s.count, counting, now)
+            self._claim(stack, layout, s.index)
+        for s in new:
+            stack = Stack(s.item, s.count, now)
+            self.stacks.append(stack)
+            self._claim(stack, layout, s.index)
+
+    def _claim(self, stack, layout, index):
+        for other in self.stacks:
+            if other is not stack and other.at.get(layout) == index:
+                del other.at[layout]
+        stack.at[layout] = index
+
+    def _count(self, stack, count, counting, now):
+        before, undo = stack.count, stack.last_use
+        stack.last_use = None
+        if counting and count < before:
+            drop = before - count
+            if drop <= allowed_drop(now - stack.seen):      # (more than drinking explains: it just starts over)
+                if drop > MAX_STEP and stack.pending != count:
+                    stack.pending, stack.last_use = count, undo
+                    return
+                self.used[stack.item] = self.used.get(stack.item, 0) + drop
+                stack.last_use = (count, before)            # (undone if the next look is `before` again)
+        elif counting and undo == (before, count):          # back to the count before a use: that was a misread
+            self.used[stack.item] -= count - before
+        stack.count, stack.seen, stack.pending = count, now, None
 
 
 # ---------------------------------------------------------------- prices
