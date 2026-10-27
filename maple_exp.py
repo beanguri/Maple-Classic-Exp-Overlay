@@ -58,6 +58,7 @@ import ocr
 import potions
 import report
 import shadow
+import ui_layout
 from platforms import create_platform, hotkey_text, parse_hotkey
 from report import Health, Recent
 from ui_gfx import INK, TEXT_DIM
@@ -438,10 +439,19 @@ def sharing_blocked():
     return bool(os.environ.get("MAPLE_EXP_DATA") and not os.environ.get("MAPLE_EXP_ALLOW_SHARE"))
 
 
+def newer_health_key(field, body):
+    """Is `field`, which the site refused, something only a newer overlay sends (so the site is the one that's old)?"""
+    ms = body.get("ms") if isinstance(body, dict) else None
+    return (field in healthlog.V2_KEYS and field in body) or (
+        field == "ms" and isinstance(ms, dict) and any(k in ms for k in healthlog.V2_MS))
+
+
 def post_health(body, timeout=15):
     """Sends one health report (healthlog.HealthLog.body) to the stats site. Returns (outcome, detail):
     'ok' (taken; also when the site already had that day), 'bad' (refused: detail names the field), 'big'
-    (too large) or 'later' (a limit, a network problem or the site is down: try again tomorrow)."""
+    (too large) or 'later' (a limit, a network problem or the site is down: try again tomorrow). A refusal that
+    names a key only this version sends (the site wasn't updated yet) is 'later' too, with the key as detail:
+    the day waits instead of being dropped for good."""
     if sharing_blocked():
         raise RuntimeError("health reports are off while testing (MAPLE_EXP_DATA is set)")
     request = urllib.request.Request(f"{STATS_SITE}/api/health", data=json.dumps(body).encode(), headers={
@@ -461,6 +471,8 @@ def post_health(body, timeout=15):
             field = re.sub(r"[^A-Za-z_]", "", field)[:40]
             # (only the site's own refusal names a field; a proxy or a hotel Wi-Fi page answering 400 is "try later",
             # or that day would be dropped for nothing)
+            if field and newer_health_key(field, body):
+                return "later", field
             return ("bad", field) if field else ("later", "")
         return "later", ""
     except Exception:
@@ -1730,9 +1742,10 @@ def find_party_bars(bgr, gh, hsv=None):
 # --------------------------------------------------------------------------- finding it on screen
 
 Reading = namedtuple("Reading", "where candidates confident text image boxes map note "
-                                 "mesos mesos_image mesos_boxes party mesos_at window bar percent_only level exp_kind tries ms shadow v2_at",
+                                 "mesos mesos_image mesos_boxes party mesos_at window bar percent_only level exp_kind tries ms shadow v2_at "
+                                 "shadow_why ui layout shadows",
                      defaults=((), False, "", None, (), None, None, None, None, (), None, None, None, None, False, None,
-                               None, (), None, None, None))
+                               None, (), None, None, None, None, None, None, ()))
 # percent_only: the bar shows just "[58.47%]" (candidates are then [(None, pct)]); level: the level read
 # from the status bar's LV badge, with where it came from, as (level, source), or None
 # exp_kind, tries and ms are for health reports (healthlog.py): how the EXP look went (read, tesseract, unclear,
@@ -1740,6 +1753,10 @@ Reading = namedtuple("Reading", "where candidates confident text image boxes map
 # how long the look took in milliseconds
 # shadow and v2_at are for shadow mode (shadow.py): (what happened, v2's milliseconds), and (key, box) when reader v2
 # found the bar in a new place, to remember in the config
+# shadow_why, ui, layout and shadows are for health reports too: why reader v2 didn't read the EXP bar when today's
+# reader did ("not_found" / "unclear", only with an old_only shadow); the UI size the look knew ("default" / "ideal",
+# from the EXP digit height); the potion bar's layout when the finder found it (potion_bar.LAYOUTS); and what the
+# other parts' shadows did this look, (part, what happened, v2's milliseconds) each
 
 
 def _view(img, lay):
@@ -1821,7 +1838,12 @@ class ScreenReader:
         self.part_failed_at = {}            # part -> when it last failed, until a later try works
         self._part_logged = {}              # part -> (when errors.log last heard of it, failures skipped since)
         self.shadow = shadow.Shadow(find_exp_v2, digits_v2.read_layout_v2, fits_exp_table, exp_font.load, _view,
-                                    lambda exc: self._part_failed("reader v2", exc))      # reader v2, beside this one
+                                    lambda exc: self._part_failed("reader v2", exc),      # reader v2, beside this one
+                                    nobar_seconds=shadow.NOBAR_BY_PART["exp"])
+        self.shadows = {"exp": self.shadow}         # one shadow per part (shadow.PARTS): mesos and party join below
+        for part in shadow.PARTS[1:]:
+            self.shadows[part] = shadow.PartShadow(part, lambda exc, part=part: self._part_failed(f"reader v2 {part}", exc))
+        self._part_shadows = []             # (part, what happened, v2's ms) of the other parts' shadows in this look
         self.saved_v2 = {}                  # "WxH/gh" -> where reader v2 found the bar last time (from the config)
         self.v2_spot = None                 # ...and where it has found it in this game window (x0, y0, x1, y1)
 
@@ -1839,6 +1861,24 @@ class ScreenReader:
 
     def _part_ok(self, part):
         self.part_failed_at.pop(part, None)
+
+    def set_shadow(self, on):
+        """The one switch for every part's reader v2 (config shadow_reader)."""
+        for each in self.shadows.values():
+            each.on = bool(on)
+
+    def shadow_part(self, part, old, old_ms, run, searching=False):
+        """Runs reader v2 for a part beside today's reader and notes what happened for this look's Reading (shadow.py).
+        `old` today's confident answer or None, `old_ms` what today's reader spent, `run()` -> (answer, why),
+        `searching` today's reader found nothing to read. Never raises and never changes what was read."""
+        each = self.shadows[part]
+        try:
+            res = each.look(old, old_ms, run, searching)
+        except Exception as e:
+            res = each.failed(e)            # (a failure in the code around v2, outside its own guard)
+        if res is not None:
+            self._part_shadows.append((part, res.category, res.ms))
+        return res
 
     def _tried(self, part, worked):
         """Notes that a reader tried during this look (map, class, level, mesos, potions), for health reports."""
@@ -1910,6 +1950,7 @@ class ScreenReader:
 
     def _look(self, capture):
         self._tries = []
+        self._part_shadows = []
         if self.look_again_requested:
             self.look_again_requested = False
             self._forget_places()
@@ -1944,7 +1985,15 @@ class ScreenReader:
                         self._read_level(capture, rect)
         return self._with_part_notes(reading._replace(
             level=(self.level, "badge") if self.level and reading.percent_only and self.mode == "window" else None,
-            tries=tuple(self._tries)))
+            tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect)))
+
+    def _ui_mode(self, reading, rect):
+        """"default" or "ideal" when this look can tell (the EXP bar was found, so its digit height is this window's),
+        else None. At small windows both draw the same and it can't be told."""
+        if not (rect and self.gh and self.mode == "window" and reading.exp_kind in ("read", "tesseract", "unclear")):
+            return None
+        got = ui_layout.mode_from_gh(self.gh, rect[3])
+        return got[0] if got else None
 
     def map_blind_seconds(self):
         """How long the minimap's name box hasn't been visible (0 if it never was: no map to lose)."""
@@ -2248,7 +2297,8 @@ class ScreenReader:
             if self.v2_spot is None or max(abs(a - b) for a, b in zip(box, self.v2_spot)) > 3:
                 self.v2_spot = box
                 at = (key, list(box))
-        return reading._replace(shadow=(res.category, res.ms), v2_at=at)
+        return reading._replace(shadow=(res.category, res.ms), v2_at=at,
+                                shadow_why=res.why if res.category == "old_only" else None)
 
     def _read(self, shot, where, lay=None):
         """Returns (Reading, Layout or None). Its exp_kind (for health reports): read = the templates gave a
@@ -4178,7 +4228,7 @@ class App:
         if isinstance(saved, list) and len(saved) == 6:
             self.reader.saved_mesos = tuple(saved)
         self.reader.saved_v2 = dict(self.cfg.get("exp_v2_spots") or {})
-        self.reader.shadow.on = self.cfg["shadow_reader"]           # (reader v2 in shadow mode: off with shadow_reader false)
+        self.reader.set_shadow(self.cfg["shadow_reader"])           # (reader v2 in shadow mode: off with shadow_reader false)
         self.session = Session(self.cfg["gap_seconds"])
         self.tracker, self.meso = self.session.exp, self.session.meso
         self.party = 1
@@ -5357,7 +5407,8 @@ class App:
             if rect and gh:
                 game = (rect[2], rect[3], any(rect[2] == w and rect[3] == h for w, h, _ in self._health_monitors), gh)
             self.healthlog.look(healthlog.kind_of(r), r.percent_only, r.tries, r.ms,
-                                (now - last) if last is not None and self.tracker.running else 0.0, game, r.shadow)
+                                (now - last) if last is not None and self.tracker.running else 0.0, game, r.shadow,
+                                r.ui, r.layout, r.shadows, r.shadow_why)
         except Exception as e:                      # (counting must never keep a reading from being handled)
             log_error("counting a look for the health report", e)
 
@@ -5412,7 +5463,10 @@ class App:
 
     def _health_done(self, day, outcome, detail):
         self._health_sending = False
-        if outcome == "bad":
+        if outcome == "later" and detail:
+            log_error(f"the site doesn't know the health field {detail} yet, so the report for {day} waits",
+                      ValueError(detail))
+        elif outcome == "bad":
             log_error(f"the site refused the health report for {day}", ValueError(detail or "unknown field"))
         elif outcome == "big":
             log_error(f"the site refused the health report for {day}", ValueError("too large"))
@@ -6283,6 +6337,7 @@ class App:
                                             "mesos_learned", "party_area", "job_why")},
                        "level_unknown": t.req is None},
             "shadow": self.reader.shadow.facts(),
+            "shadow_parts": {p: self.reader.shadows[p].facts() for p in shadow.PARTS[1:]},
             "health": {"alive": h.alive and self._worker_alive(), "polls": h.polls, "errors": h.errors,
                        "last_error": h.last_error, "average_ms": h.average_ms(), "max_ms": h.max_ms,
                        "last_ms": h.last_ms, "age": None if h.last_at is None else now - h.last_at},

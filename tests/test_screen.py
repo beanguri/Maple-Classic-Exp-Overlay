@@ -1826,5 +1826,180 @@ for (w_, h_, ideal) in ((2560, 1440, False), (2560, 1600, False), (2732, 1536, F
     strip = win[int(h_ * (1 - m.SEARCH_STRIP)):]
     check(f"synthetic {w_}x{h_}, UI {'Ideal' if ideal else 'Default'}: the bar is found in the bottom strip and read",
           read_v2(strip) == (68601, 71.68))
+
+import ui_layout  # noqa: E402
+
+# ---- one shadow per part (ticket 11): EXP's reasons, the mesos and party shadows, one switch, per-part guards
+unit = shadow_unit(None)
+unit.fits = lambda e, p: True
+res = unit.look(img, GOOD, 5.0, LAY)
+check("shadow why: today's reader read it and v2 found the bar but couldn't read it is old_only / 'unclear'",
+      res.category == "old_only" and res.why == "unclear" and unit.why["unclear"] == 1 and unit.why["not_found"] == 0)
+unit = shadow_unit(GOOD, finds=False)
+res = unit.look(img, GOOD, 5.0, LAY)
+check("shadow why: v2 found no bar at all is old_only / 'not_found'", res.category == "old_only" and res.why == "not_found" and unit.why["not_found"] == 1)
+unit = shadow_unit(GOOD)
+unit.fits = lambda e, p: True
+res = unit.look(img, GOOD, 5.0, LAY)
+check("shadow why: a read is 'ok', and only old_only looks are counted by reason", res.why == "ok" and not any(unit.why.values()))
+facts = unit.facts()
+check("shadow why: the facts name the part and hold the reasons", facts["name"] == "exp" and facts["why"] == {"not_found": 0, "unclear": 0})
+
+def part_unit(answer, why="ok", cost_ms=5.0, name="mesos", errors=None, **kw):
+    clk = FakeTime()
+
+    def run():
+        clk.now += cost_ms / 1000
+        if isinstance(answer, Exception):
+            raise answer
+        return answer, why
+    unit = shadow_mod.PartShadow(name, (errors if errors is not None else []).append, timer=clk, **kw)
+    return unit, run
+
+for old, new, want in ((1500, 1500, "agree"), (1500, None, "old_only"), (None, 1500, "v2_only"), (None, None, "neither"),
+                       (1500, 1400, "disagree"), (2, 2, "agree"), (0, 0, "agree"), (0, None, "old_only")):
+    unit, run = part_unit(new, "ok" if new is not None else "not_found")
+    res = unit.look(old, 5.0, run)
+    check(f"part shadow: old {old} and v2 {new} is '{want}'", res.category == want and unit.counts[want] == 1 and res.answer == new)
+unit, run = part_unit(None, "unclear")
+res = unit.look(1500, 5.0, run)
+check("part shadow: old_only is counted by v2's reason too", res.why == "unclear" and unit.why["unclear"] == 1 and unit.facts()["why"]["unclear"] == 1)
+unit, run = part_unit(1400)
+for _ in range(5):
+    unit.look(1500, 5.0, run)
+check("part shadow: the last 3 disagreements are kept, the answers shown by the bug report",
+      len(unit.diffs) == 3 and "old 1,500, v2 1,400" in "\n".join(report.shadow_lines(unit.facts()))
+      and "Own strip grabs" not in "\n".join(report.shadow_lines(unit.facts())))
+unit, run = part_unit(1500, "weird")
+errs = []
+unit.on_error = errs.append
+res = unit.look(1500, 5.0, run)
+check("part shadow: a reason outside the contract is an error, not a count", res.category == "errors" and unit.counts["errors"] == 1 and len(errs) == 1
+      and sum(unit.counts[k] for k in ("agree", "disagree")) == 0)
+
+real_mono = m.time.monotonic
+clock = [9000.0]
+m.time.monotonic = lambda: clock[0]
+try:
+    errs = []
+    unit, run = part_unit(ValueError("boom"), errors=errs)
+    res = unit.look(1500, 5.0, run)
+    check("part shadow: v2 raising is counted, reported once, and doesn't escape",
+          res.category == "errors" and unit.counts["errors"] == 1 and len(errs) == 1)
+    check("part shadow: ...and v2 rests for 60 s (not counted)", unit.look(1500, 5.0, run) is None and len(errs) == 1)
+    clock[0] += 61
+    check("part shadow: ...then runs again", unit.look(1500, 5.0, part_unit(1500)[1]).category == "agree")
+    mesos, party = part_unit(ValueError("boom"), name="mesos")[0], part_unit(2, name="party")[0]
+    mesos.look(1500, 5.0, part_unit(ValueError("boom"))[1])
+    check("part shadow: one part's error rests only that part", mesos.idle() and not party.idle())
+
+    unit, run = part_unit(1500, cost_ms=6)
+    cats = [unit.look(1500, 10.0, run).category for _ in range(shadow_mod.GUARD_MIN + 10)]
+    check("part shadow CPU guard: more than half of today's cost runs v2 every other look (the rest counted as skipped)",
+          unit.thinned and cats[shadow_mod.GUARD_MIN + 2:].count("skipped") >= 3)
+    unit, run = part_unit(1500, cost_ms=12)
+    cats = [unit.look(1500, 10.0, run).category for _ in range(shadow_mod.GUARD_MIN + 10)]
+    check("part shadow CPU guard: costing more than today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
+    cheap, run2 = part_unit(1500, name="party", cost_ms=1)
+    for _ in range(shadow_mod.GUARD_MIN + 10):
+        cheap.look(1500, 10.0, run2)
+    check("part shadow CPU guard: each part has its own (one stopping leaves the other running)", not cheap.stopped and not cheap.thinned)
+
+    mesos, run = part_unit(1500, name="mesos")
+    party, run2 = part_unit(2, name="party", nobar_seconds=30)
+    ran = {"mesos": 0, "party": 0}
+    for step in range(60):                         # 90 s of looks where today's reader finds nothing to read
+        ran["mesos"] += mesos.look(None, 30.0, run, searching=True) is not None
+        ran["party"] += party.look(None, 30.0, run2, searching=True) is not None
+        clock[0] += 1.5
+    check("part shadow: with nothing to read on today's side v2 runs at most every nobar_seconds, set per part (10 s and 30 s)",
+          8 <= ran["mesos"] <= 10 and 3 <= ran["party"] <= 4 and not mesos.times and shadow_mod.NOBAR_BY_PART["party"] == 10)
+    check("part shadow: ...and those looks never turn v2 off (the guard compares looks where both had something)", not mesos.stopped)
+    unit, run = part_unit(1500)
+    unit.look(1500, 5.0, run, searching=True)
+    check("part shadow: with something to read, searching=False runs v2 at every look", all(unit.look(1500, 5.0, run) for _ in range(5)))
+finally:
+    m.time.monotonic = real_mono
+unit, run = part_unit(1500)
+unit.on = False
+check("part shadow: switched off runs nothing and counts nothing", unit.look(1500, 5.0, run) is None and not any(unit.counts.values()))
+
+# through the real reader: the parts' shadows ride along in the Reading, today's reading is untouched
+plain = shadow_reader(False)
+r = shadow_reader(True)
+orig_extras = r._read_extras
+
+
+def extras_with_shadows(capture, rect, reading):
+    r.shadow_part("mesos", 1500, 3.0, lambda: (1500, "ok"))
+    r.shadow_part("party", 2, 3.0, lambda: (3, "ok"))
+    return orig_extras(capture, rect, reading)
+
+
+r._read_extras = extras_with_shadows
+got, want = r.read(fscreen), plain.read(fscreen)
+check("shadow parts: the Reading says what each part's shadow did this look, as (part, what happened, v2's ms)",
+      [(p, c) for p, c, _ in got.shadows] == [("mesos", "agree"), ("party", "disagree")] and all(x[2] is not None for x in got.shadows))
+check("shadow parts: ...and today's reading is exactly what it is without them (EXP's own shadow unchanged)",
+      same_input(got, want) and got.confident and got.shadow[0] == "agree" and want.shadows == ())
+check("shadow parts: the counts are kept per part", r.shadows["mesos"].counts["agree"] == 1 and r.shadows["party"].counts["disagree"] == 1
+      and r.shadows["exp"] is r.shadow)
+again = r.read(fscreen)
+check("shadow parts: each look starts with none (a look where no part ran has no notes)", [p for p, _, _ in again.shadows] == ["mesos", "party"])
+r2 = shadow_reader(True)
+check("shadow parts: no part ran, no notes", r2.read(fscreen).shadows == ())
+r.set_shadow(False)
+off = r.read(fscreen)
+check("shadow parts: shadow_reader false switches every part off (EXP's too) and nothing is counted",
+      off.shadows == () and off.shadow is None and r.shadows["mesos"].counts["agree"] == 2 and r.shadows["party"].on is False)
+r.set_shadow(True)
+check("shadow parts: ...and back on", all(each.on for each in r.shadows.values()))
+
+glue = shadow_reader(True)
+glue_orig = glue._read_extras
+
+
+def extras_failing(capture, rect, reading):
+    glue.shadows["mesos"].look = lambda *a, **k: 1 / 0         # (a failure in the code around v2, outside its own guard)
+    glue.shadow_part("mesos", 1500, 3.0, lambda: (1500, "ok"))
+    return glue_orig(capture, rect, reading)
+
+
+glue._read_extras = extras_failing
+got = glue.read(fscreen)
+check("shadow parts: a failure around a part's shadow leaves today's reading as it was, counted as a failed part, that part rests",
+      got.confident and same_input(got, plain.read(fscreen)) and got.shadows == (("mesos", "errors", None),)
+      and glue.part_errors["reader v2 mesos"] == 1 and glue.shadows["mesos"].idle() and not glue.shadows["party"].idle())
+
+# EXP's reason, and the UI size, in the Reading
+why = shadow_reader(True)
+why.shadow.read = lambda font, lay: None
+got = why.read(fscreen)
+check("shadow why: the Reading carries v2's reason when today's reader read the bar and v2 didn't",
+      got.shadow[0] == "old_only" and got.shadow_why == "unclear")
+check("shadow why: ...and nothing when the two agree", shadow_reader(True).read(fscreen).shadow_why is None)
+ui_reader = shadow_reader(False)
+got = ui_reader.read(fscreen)
+expect = ui_layout.mode_from_gh(ui_reader.gh, fh)
+check("UI size: the Reading names the mode the EXP bar's digit height says (or nothing when it can't tell)",
+      got.exp_kind == "read" and got.ui == (expect[0] if expect else None))
+dark = shadow_reader(False)
+got = dark.read(FakeScreen(np.zeros_like(frame)))
+check("UI size: a look that didn't find the bar says nothing about it", got.exp_kind != "read" and got.ui is None and got.layout is None)
+steps = {}
+for h_, gh_ in ((1080, 11.0), (1080, 7.0), (1440, 14.0), (2160, 14.0), (2160, 20.0), (768, 7.0)):
+    got_ = ui_layout.mode_from_gh(gh_, h_)
+    steps[(h_, gh_)] = got_[0] if got_ else None
+check("UI size: what mode_from_gh answers for the sizes seen (Default 1080p, Ideal 1080p, 4K Ideal 2x; 1440p gh 14 and 768 can't tell)",
+      steps == {(1080, 11.0): "default", (1080, 7.0): "ideal", (1440, 14.0): None, (2160, 14.0): "ideal",
+                (2160, 20.0): "default", (768, 7.0): None})
+
+# the bug report
+pf = r.shadows["mesos"].facts()
+text = report.details({"shadow": shadow_reader(True).shadow.facts(), "shadow_parts": {"mesos": pf, "party": r.shadows["party"].facts()}})
+check("shadow parts: the details text has a 'Reader v2 (test)' part for each part",
+      "== Reader v2 (test): Mesos ==" in text and "== Reader v2 (test): Party size ==" in text and "Last answers: old 1,500, v2 1,500" in text
+      and "Old reader only, by why v2 didn't read: not_found 0, unclear 0" in text)
+check("shadow parts: the details text still works without them (older facts)", "Reader v2 (test): Mesos" not in report.details({"shadow": {}}))
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

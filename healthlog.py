@@ -2,7 +2,7 @@
 
 Numbers only. This module keeps one small record per UTC day (health.json in the data folder), builds
 the report body for a finished day and checks it against the rules the site enforces (the same rules
-as server/src/reports.js; tests/health_contract.json holds the cases both sides test against).
+as server/src/reports.js; tests/health_contract_v2.json holds the cases both sides test against).
 It never holds a picture, a name, a map, the class, an amount or a path.
 """
 import calendar
@@ -18,6 +18,12 @@ SEND_EVERY = 3600           # at most one send attempt per hour (kept across res
 SAVE_EVERY = 300            # the record is written this often (and at exit)
 EXP_KINDS = ("read", "tesseract", "unclear", "not_found", "covered", "no_window")
 SHADOW_KEYS = ("agree", "disagree", "v2_only", "old_only", "neither", "skipped", "errors")     # shadow mode (shadow.py)
+# Added for 0.9.14 (all optional in the body: an older overlay leaves them out and the site takes both shapes):
+UI_KEYS = ("default", "ideal", "keyboard", "controller")        # looks by UI size (Default / Ideal) and by potion layout
+WHY_KEYS = ("not_found", "unclear")                             # EXP's old_only looks by why reader v2 didn't read it
+SHADOW_PARTS = ("mesos", "party")                               # a shadow of their own (EXP's is "shadow")
+V2_KEYS = ("ui", "shadow_mesos", "shadow_party", "shadow_why")  # the new top-level keys (an old site refuses them by name)
+V2_MS = ("mesos_v2_avg", "party_v2_avg")                        # ...and the new keys of "ms"
 PAIRS = {"level": ("read", "unclear"), "map": ("read", "unread"), "class": ("read", "unread"),
          "mesos": ("read", "unclear"), "potions": ("read", "unclear")}
 MAX_COUNT = 10_000_000
@@ -90,7 +96,7 @@ def bad_field(body, today):
         return "body"
     required = ["id", "version", "day", "os", "screens", "game", "capture", "tesseract", "seconds_tracking",
                 "looks", "exp"]
-    optional = ["level", "map", "class", "mesos", "potions", "errors", "ms", "shadow"]
+    optional = ["level", "map", "class", "mesos", "potions", "errors", "ms", "shadow"] + list(V2_KEYS)
     for k in body:
         if k not in required and k not in optional:
             return str(k)
@@ -148,14 +154,26 @@ def bad_field(body, today):
     if "ms" in body:
         m = body["ms"]
         ok = lambda x: type(x) in (int, float) and x == x and 0 <= x <= 10000
-        if (not isinstance(m, dict) or any(k not in ("look_avg", "look_p95", "v2_avg") for k in m)
-                or not ok(m.get("look_avg")) or not ok(m.get("look_p95")) or ("v2_avg" in m and not ok(m["v2_avg"]))):
+        if (not isinstance(m, dict) or any(k not in ("look_avg", "look_p95", "v2_avg") + V2_MS for k in m)
+                or not ok(m.get("look_avg")) or not ok(m.get("look_p95"))
+                or any(k in m and not ok(m[k]) for k in ("v2_avg",) + V2_MS)):
             return "ms"
     if "shadow" in body:
         keys = ("agree", "disagree", "v2_only", "old_only", "neither", "skipped", "errors")
         sh = body["shadow"]
         if not isinstance(sh, dict) or set(sh) != set(keys) or not all(_COUNT(sh[k]) for k in keys):
             return "shadow"
+    for name in ("shadow_mesos", "shadow_party"):
+        if name in body:
+            sh = body[name]
+            if not isinstance(sh, dict) or set(sh) != set(SHADOW_KEYS) or not all(_COUNT(sh[k]) for k in SHADOW_KEYS):
+                return name
+    # (ui and shadow_why are also at most 'looks'; no sums across them are checked, so a counting slip never loses a day)
+    for name, keys in (("ui", UI_KEYS), ("shadow_why", WHY_KEYS)):
+        if name in body:
+            c = body[name]
+            if not isinstance(c, dict) or set(c) != set(keys) or not all(_IS_INT(c[k], 0, body["looks"]) for k in keys):
+                return name
     return None
 
 
@@ -173,7 +191,10 @@ def _new_day():
     return {"looks": 0, "exp": {k: 0 for k in EXP_KINDS + ("percent_only",)},
             **{name: {k: 0 for k in pair} for name, pair in PAIRS.items()},
             "errors": {}, "tracking": 0.0, "ms_total": 0.0, "ms_n": 0, "hist": {}, "games": {}, "snap": {},
-            "shadow": {k: 0 for k in SHADOW_KEYS}, "v2_ms": 0.0, "v2_n": 0, "sent": False}
+            "shadow": {k: 0 for k in SHADOW_KEYS}, "v2_ms": 0.0, "v2_n": 0,
+            "ui": {k: 0 for k in UI_KEYS}, "why": {k: 0 for k in WHY_KEYS},
+            **{f"shadow_{p}": {k: 0 for k in SHADOW_KEYS} for p in SHADOW_PARTS},
+            **{f"{p}_v2_ms": 0.0 for p in SHADOW_PARTS}, **{f"{p}_v2_n": 0 for p in SHADOW_PARTS}, "sent": False}
 
 
 class HealthLog:
@@ -233,6 +254,12 @@ class HealthLog:
         for key in SHADOW_KEYS:
             out["shadow"][key] = int(num(src.get(key)))
         out["v2_ms"], out["v2_n"] = float(num(rec.get("v2_ms"))), int(num(rec.get("v2_n")))
+        for name, keys in (("ui", UI_KEYS), ("why", WHY_KEYS), ("shadow_mesos", SHADOW_KEYS), ("shadow_party", SHADOW_KEYS)):
+            src = rec.get(name) if isinstance(rec.get(name), dict) else {}
+            for key in keys:
+                out[name][key] = int(num(src.get(key)))
+        for p in SHADOW_PARTS:
+            out[f"{p}_v2_ms"], out[f"{p}_v2_n"] = float(num(rec.get(f"{p}_v2_ms"))), int(num(rec.get(f"{p}_v2_n")))
         out["sent"] = rec.get("sent") is True
         return out
 
@@ -280,10 +307,14 @@ class HealthLog:
                 self.days[day]["snap"] = json.loads(json.dumps(self.days[max(earlier)]["snap"]))
         return self.days[day]
 
-    def look(self, kind, percent_only=False, tries=(), ms=None, tracking=0.0, game=None, shadow=None):
+    def look(self, kind, percent_only=False, tries=(), ms=None, tracking=0.0, game=None, shadow=None,
+             ui=None, layout=None, shadows=(), why=None):
         """Counts one look. `kind`: one of EXP_KINDS. `tries`: (part, worked) pairs for the other readers.
         `ms`: how long the look took. `tracking`: seconds the tracker has been running since the last look.
-        `game`: (w, h, fullscreen, gh) or None. `shadow`: (what reader v2 did, its milliseconds) or None."""
+        `game`: (w, h, fullscreen, gh) or None. `shadow`: (what reader v2 did, its milliseconds) or None.
+        `ui`: "default" / "ideal" when the look knew the UI size, else None. `layout`: the potion bar's layout
+        (potion_bar.LAYOUTS) when it was found, else None. `shadows`: (part, what v2 did, its milliseconds) for the
+        other parts (SHADOW_PARTS). `why`: why EXP's reader v2 didn't read it (counted when `shadow` is old_only)."""
         rec = self.today()
         if kind not in EXP_KINDS:
             return
@@ -304,6 +335,18 @@ class HealthLog:
             if shadow[1] is not None and 0 <= shadow[1] < 1e7:
                 rec["v2_ms"] += shadow[1]
                 rec["v2_n"] += 1
+            if shadow[0] == "old_only" and why in WHY_KEYS:
+                rec["why"][why] += 1
+        if ui in ("default", "ideal"):
+            rec["ui"][ui] += 1
+        if isinstance(layout, str) and (layout == "keyboard" or layout.startswith("controller")):
+            rec["ui"]["controller" if layout.startswith("controller") else "keyboard"] += 1
+        for part, what, took in shadows or ():
+            if part in SHADOW_PARTS and what in SHADOW_KEYS:
+                rec[f"shadow_{part}"][what] += 1
+                if took is not None and 0 <= took < 1e7:
+                    rec[f"{part}_v2_ms"] += took
+                    rec[f"{part}_v2_n"] += 1
         rec["tracking"] += max(0.0, min(MAX_LOOK_GAP, tracking))
         if game:
             w, h, fs, gh = game
@@ -356,6 +399,14 @@ class HealthLog:
                 body["ms"]["v2_avg"] = round(min(10000.0, rec["v2_ms"] / rec["v2_n"]), 1)
         if any(rec["shadow"].values()):
             body["shadow"] = {k: min(MAX_COUNT, rec["shadow"][k]) for k in SHADOW_KEYS}
+        for p in SHADOW_PARTS:
+            if any(rec[f"shadow_{p}"].values()):
+                body[f"shadow_{p}"] = {k: min(MAX_COUNT, rec[f"shadow_{p}"][k]) for k in SHADOW_KEYS}
+            if rec[f"{p}_v2_n"] and "ms" in body:
+                body["ms"][f"{p}_v2_avg"] = round(min(10000.0, rec[f"{p}_v2_ms"] / rec[f"{p}_v2_n"]), 1)
+        for name, key, keys in (("ui", "ui", UI_KEYS), ("shadow_why", "why", WHY_KEYS)):
+            if any(rec[key].values()):                  # (never more than the looks: the site checks that, and only that)
+                body[name] = {k: min(body["looks"], rec[key][k]) for k in keys}
         return body if bad_field(body, utc_day(self.clock())) is None else None
 
     @staticmethod

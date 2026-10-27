@@ -171,20 +171,30 @@ def answer_text(a):
     return f"[{a[1]:.2f}%]" if a[0] is None else f"{a[0]:,} [{a[1]:.2f}%]"
 
 
+def part_answer_text(a):
+    """A plain answer of a part's shadow (an amount of mesos, a party size) for the text."""
+    return "nothing" if a is None else f"{a:,}" if isinstance(a, int) else str(a)
+
+
 def shadow_lines(s):
-    """The "Reader v2 (test)" part of the details: what the new reader did beside the old one."""
+    """The "Reader v2 (test)" part of the details: what the new reader did beside the old one. `s` is one part's
+    shadow facts (the EXP bar's, or a part's from shadow_parts)."""
     c = s.get("counts") or {}
+    text = answer_text if s.get("name", "exp") == "exp" else part_answer_text
     state = ("off in Settings" if not s.get("on") else "stopped (too slow here)" if s.get("stopped")
              else "every other look (slow here)" if s.get("thinned") else "on")
     out = [_kv("State", state),
-           _kv("Looks", ", ".join(f"{k} {c.get(k, 0)}" for k in ("agree", "disagree", "v2_only", "old_only", "neither", "skipped", "errors"))),
-           _kv("Own strip grabs", c.get("grabs", 0)),
-           _kv("EXP changed between the two pictures", c.get("ticks", 0)),
-           _kv("Time per look", f"v2 {s.get('v2_ms')} ms, old reader {s.get('old_ms')} ms" if s.get("v2_ms") is not None else "not measured yet")]
+           _kv("Looks", ", ".join(f"{k} {c.get(k, 0)}" for k in ("agree", "disagree", "v2_only", "old_only", "neither", "skipped", "errors")))]
+    if s.get("name", "exp") == "exp":
+        out += [_kv("Own strip grabs", c.get("grabs", 0)),
+                _kv("EXP changed between the two pictures", c.get("ticks", 0))]
+    why = s.get("why") or {}
+    out += [_kv("Old reader only, by why v2 didn't read", ", ".join(f"{k} {why.get(k, 0)}" for k in ("not_found", "unclear"))),
+            _kv("Time per look", f"v2 {s.get('v2_ms')} ms, old reader {s.get('old_ms')} ms" if s.get("v2_ms") is not None else "not measured yet")]
     last = s.get("last")
-    out.append(_kv("Last answers", f"old {answer_text(last[0])}, v2 {answer_text(last[1])}" if last else "none yet"))
+    out.append(_kv("Last answers", f"old {text(last[0])}, v2 {text(last[1])}" if last else "none yet"))
     for old, new in s.get("diffs") or []:
-        out.append(_kv("Disagreed", f"old {answer_text(old)}, v2 {answer_text(new)}"))
+        out.append(_kv("Disagreed", f"old {text(old)}, v2 {text(new)}"))
     return out
 
 
@@ -229,6 +239,10 @@ def details(f):
             _kv("Last look finished", f"{int(h['age'])} s ago" if h.get("age") is not None else "never"),
             _kv("Last error", h.get("last_error") or "none"), ""]
     out += ["== Reader v2 (test) =="] + shadow_lines(f.get("shadow") or {}) + [""]
+    for part, title in (("mesos", "Mesos"), ("party", "Party size")):
+        facts = (f.get("shadow_parts") or {}).get(part)
+        if facts:
+            out += [f"== Reader v2 (test): {title} =="] + shadow_lines(facts) + [""]
     out += ["== Settings ==", _kv("Settings", ", ".join(f"{k} {v}" for k, v in s.items())), ""]
     wrong = looks_wrong(f)
     out += ["== Things that look wrong =="] + ([f"- {w}" for w in wrong] if wrong else ["- Nothing stands out."]) + [""]
