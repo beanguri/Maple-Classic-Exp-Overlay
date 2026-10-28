@@ -294,6 +294,33 @@ def make_window(layout, width, height, scale, shift=(0, 0), rows=3, cover=None):
     return np.clip(np.round(pic), 0, 255).astype(np.uint8)
 
 
+BUTTON = (150, 120, 190)          # the pink ATTACK / JUMP tiles
+
+
+def make_cluster_window(layout, width, height, scale, shift=(0, 0)):
+    """A game window picture (BGR) with the controller's Cross-Style cluster at this UI scale: slots {index: (icon, count)};
+    "button" is a pink tile, "skill" a skill's icon. Same count glyphs as the keyboard bar's, in the controller's place."""
+    pic = np.full((height, width, 3), (70, 62, 58), np.float32)
+    ox, oy = COUNT_FONT.styles["controller"]["origin"]
+    for index, (x, y, w, h) in potion_bar.controller_rects(width, height, scale, shift).items():
+        t = max(1, int(round(scale)))
+        pic[y - t:y + h + t, x - t:x + w + t] = FRAME
+        slot = np.full((h, w, 3), PLATE, np.uint8)
+        icon, count = layout.get(index, (None, None))
+        if icon == "button":
+            slot[:] = BUTTON
+        elif icon == "skill":
+            cv2.circle(slot, (w // 2, h // 2), int(w * 0.3), (60, 200, 60), -1)
+        elif icon:
+            draw_icon(slot, icon)
+        pic[y:y + h, x:x + w] = slot
+        if icon in ("red", "blue", "orange", "scroll") and count is not None:
+            p = glyphs.draw(COUNT_FONT, str(count), scale, x + (ox + 0.37) * scale, y + h + (oy + 0.61) * scale, pic.shape[:2],
+                            "point" if abs(scale - round(scale)) < 0.01 else "bilinear")
+            pic = pic * (1 - p[0])[:, :, None] + np.transpose(p[1:], (1, 2, 0))
+    return np.clip(np.round(pic), 0, 255).astype(np.uint8)
+
+
 def test_table():
     """A table of the made-up icons (what assets/potion_table.json is for the real ones)."""
     items = []
@@ -302,7 +329,11 @@ def test_table():
         slot = np.full((44, 46, 3), (250, 249, 248), np.uint8)
         draw_icon(slot, icon)
         fp = [float(v) for v in potions.fingerprint(cv2.cvtColor(slot, cv2.COLOR_BGR2RGB), True)]
-        items.append({"name": name, "kind": kind, "fingerprint": fp, "seen": [fp]})      # (as if recorded on a real slot)
+        items.append({"name": name, "kind": kind, "fingerprint": fp, "seen": [fp], "seen_controller": [fp]})   # (as if recorded on real slots)
+    slot = np.full((44, 46, 3), (250, 249, 248), np.uint8)
+    cv2.circle(slot, (23, 22), 13, (60, 200, 60), -1)
+    fp = [float(v) for v in potions.fingerprint(cv2.cvtColor(slot, cv2.COLOR_BGR2RGB), True)]
+    items.append({"name": "Star skill", "kind": "skill", "fingerprint": fp, "seen_controller": [fp]})      # (a skill seen on a controller slot)
     return potions.PotionTable(items)
 
 
@@ -371,6 +402,82 @@ check("a hint from the EXP bar's digit height puts its scale first",
 check("a pic at the edge of the window (a strip) is read the same",
       potions_of(potion_bar.read_potions(pic[600:], width, height, at=(0, 600), assets=TABLE)) == WANT)
 
+# ---- the controller's cluster: found at each UI size, told from the keyboard bar both ways round (the UI flips)
+CLAYOUT = {0: ("orange", 326), 1: ("red", 18), 2: ("blue", 59), 3: ("red", 188), 5: ("button", None), 6: ("skill", None),
+           7: ("button", None)}
+CWANT = {0: ("Orange", 326), 1: ("Red Potion", 18), 2: ("Blue Potion", 59), 3: ("Red Potion", 188)}
+for (width, height), mode in (((1920, 1080), "default"), ((1920, 1080), "ideal"), ((2560, 1440), "default"),
+                              ((2560, 1440), "ideal"), ((1280, 720), None), ((3840, 2160), "ideal")):
+    scale = ui_layout.default_scale(height) if mode in ("default", None) else float(ui_layout.ideal_step(height))
+    for shift in ((0, 0), (2, -2), (-2, 1)):
+        look = potion_bar.read_potions(make_cluster_window(CLAYOUT, width, height, scale, shift), width, height, assets=TABLE)
+        check(f"the controller cluster is read right at {width}x{height}, UI size {mode or 'either'}, {shift} px off: potions and counts",
+              look.seen and potions_of(look) == CWANT and look.layout == "controller-cross" and abs(look.scale / scale - 1) < 0.02
+              and look.mode in (mode, None) and {s.style for s in look.slots} == {"controller"})
+        kinds = {s.index: s.kind for s in look.slots}
+        check("...the pink buttons and the skill are not potions, the bare slot is empty",
+              all(kinds.get(i) != "consumable" for i in (5, 6, 7)) and kinds.get(6) == "skill" and kinds.get(4) == "empty")
+
+width, height = 1920, 1080
+scale = ui_layout.default_scale(height)
+cpic = make_cluster_window(CLAYOUT, width, height, scale, (1, -1))
+kpic = make_window(LAYOUT, width, height, scale)
+first = potion_bar.read_potions(cpic, width, height, assets=TABLE)
+chint = potion_bar.Hint(potion_bar.bar_from_look(first, width, height), None, {s.index: s.run for s in first.slots if s.run})
+check("the cluster's last look is a hint that comes back with the same answer",
+      potions_of(potion_bar.read_potions(cpic, width, height, hint=chint, assets=TABLE)) == CWANT)
+look = potion_bar.read_potions(kpic, width, height, hint=chint, assets=TABLE)
+check("the UI flips to the keyboard bar: read right with the cluster's hint (the cluster's counts' Runs are not used)",
+      look.layout == "keyboard" and potions_of(look) == WANT)
+khint = potion_bar.Hint(potion_bar.bar_from_look(look, width, height), None, {s.index: s.run for s in look.slots if s.run})
+look = potion_bar.read_potions(cpic, width, height, hint=khint, assets=TABLE)
+check("...and back to the cluster", look.layout == "controller-cross" and potions_of(look) == CWANT)
+check("the cluster's slots are numbered the same on every look", [s.index for s in look.slots] == list(range(8)))
+check("a cluster is found with no hint and from the EXP bar's digit height too",
+      all(potions_of(potion_bar.read_potions(cpic, width, height, hint=h, assets=TABLE)) == CWANT
+          for h in (None, potion_bar.Hint(None, ("default", scale)), potion_bar.Hint(None, ("ideal", 1.0)))))
+check("a strip of the bottom of the window holding the cluster is read the same",
+      potions_of(potion_bar.read_potions(cpic[600:], width, height, at=(0, 600), assets=TABLE)) == CWANT)
+box = potion_bar.grab_box(width, height, chint.last)
+check("the part of the window grabbed for the bar holds both layouts (the UI can flip)",
+      all(box[0] <= r[0] and box[1] <= r[1] and r[0] + r[2] <= box[0] + box[2] and r[1] + r[3] <= box[1] + box[3]
+          for rects in (potion_bar.keyboard_rects(width, height, scale), potion_bar.controller_rects(width, height, scale))
+          for r in rects.values()))
+wrong = []
+for count in (0, 1, 2, 5, 7, 8, 9, 10, 16, 33, 59, 71, 88, 99, 100, 123, 321, 450, 987, 1234, 4567):
+    look = potion_bar.read_potions(make_cluster_window({3: ("blue", count)}, width, height, scale), width, height, assets=TABLE)
+    if potions_of(look) != {3: ("Blue Potion", count)}:
+        wrong.append((count, potions_of(look)))
+check(f"counts from 0 to 4567 are read back right in a controller slot ({wrong or 'all'})", not wrong)
+hidden = make_cluster_window({3: ("blue", 224)}, width, height, scale)
+x, y, w, h = potion_bar.controller_rects(width, height, scale)[3]
+hidden[int(y + 0.5 * h):y + h, int(x + 0.45 * w):x + w] = 60
+check("a controller count whose last digits are hidden (the mouse cursor, a popup) is no number",
+      all(c is None for _, c in potions_of(potion_bar.read_potions(hidden, width, height, assets=TABLE)).values()))
+covered = make_cluster_window(CLAYOUT, width, height, scale)
+rc = potion_bar.controller_rects(width, height, scale)
+covered[rc[0][1] - 6:rc[2][1] + rc[2][3] + 6, rc[0][0] - 6:rc[1][0] + rc[1][2] + 6] = (120, 120, 120)     # a popup over the first three cells
+look = potion_bar.read_potions(covered, width, height, assets=TABLE)
+check("a popup over a few cells of the cluster doesn't hide the rest: the others are read, the covered ones are no wrong potion",
+      look.seen and look.layout == "controller-cross" and potions_of(look).get(3) == CWANT[3]
+      and all(v == CWANT[i] or v[0] is None or v[1] is None for i, v in potions_of(look).items()))
+check("a cluster with nothing in its slots is seen and reads no potions",
+      potion_bar.read_potions(make_cluster_window({}, width, height, scale), width, height, assets=TABLE).seen
+      and not potions_of(potion_bar.read_potions(make_cluster_window({}, width, height, scale), width, height, assets=TABLE)))
+blur = potions_of(potion_bar.read_potions(cv2.GaussianBlur(cpic, (0, 0), 4), width, height, assets=TABLE))
+check("a smeared cluster gives no wrong number or item", all(v in ((None, None), CWANT[i], (CWANT[i][0], None)) for i, v in blur.items()))
+# a slot whose icon fills it (Meat) has little light background left at its edge: a controller slot takes that, a keyboard slot (key label plate) doesn't
+big = np.full((42, 45, 3), PLATE, np.uint8)
+cv2.ellipse(big, (22, 21), (21, 17), 0, 0, 360, (60, 60, 190), -1)
+button = np.full((42, 45, 3), BUTTON, np.uint8)
+check("a controller slot whose icon fills it is still an item slot, the pink tile is not",
+      potions.is_item_slot(cv2.cvtColor(big, cv2.COLOR_BGR2RGB), "controller")
+      and not potions.is_item_slot(cv2.cvtColor(button, cv2.COLOR_BGR2RGB), "controller"))
+sx, sy, sw, sh = potion_bar.controller_rects(width, height, scale)[6]
+skill_slot = cv2.GaussianBlur(make_cluster_window(CLAYOUT, width, height, scale), (0, 0), 0.8)[sy:sy + sh, sx:sx + sw]
+check("a skill icon blurred a little is a skill or unknown, never the nearest potion",
+      potion_bar._slot_item(TABLE, skill_slot, "controller")[1] in ("skill", None))
+
 # ---- the reader looks at the potion bar every few seconds, and says so when this window is in the way
 scene = make_window(LAYOUT, 1920, 1080, ui_layout.default_scale(1080))
 reader = m.ScreenReader(m.DigitTemplates.load())
@@ -386,6 +493,13 @@ try:
     check(f"the reader hands over what the potion bar shows ({len(potions_of(r.bar))} slots)",
           r.bar is not None and r.bar.seen and potions_of(r.bar) == WANT)
     check("...with the layout and UI size for the health report", r.layout == "keyboard" and r.ui == "default")
+    clock[0] += m.POTION_SECONDS + 0.1
+    r = reader._read_extras(FakeScreen(make_cluster_window(CLAYOUT, 1920, 1080, ui_layout.default_scale(1080))), (0, 0, 1920, 1080), blank)
+    check("the UI flips to the controller: the reader hands over the cluster, layout and all (from the keyboard's last spot)",
+          r.bar is not None and potions_of(r.bar) == CWANT and r.layout == "controller-cross" and r.ui == "default")
+    clock[0] += m.POTION_SECONDS + 0.1
+    r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
+    check("...and back to the keyboard bar", potions_of(r.bar) == WANT and r.layout == "keyboard")
     r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
     check("...and not again before the next few seconds are up", r.bar is None)
     clock[0] += m.POTION_SECONDS + 0.1

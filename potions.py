@@ -23,6 +23,8 @@ BAND_COLS = 8
 SHRINK = 0.04               # few coloured pixels give small numbers
 BG_MIN_SHARE = 0.12         # an item slot is at least this share light slot background...
 RING_BG_MIN = 0.35          # ...and this share of its edge ring (the pink Attack tile has 0.20)
+CONTROLLER_RING_BG_MIN = 0.25   # in the controller's slots the icons fill more of the slot (Meat has 0.32 of its ring light), and the
+                                # pink ATTACK / JUMP / QUEST tiles have at most 0.18: skills are told by their own entries instead
 EMPTY_INK_MAX = 0.03        # a slot with less than this beyond its background is empty
 W_COL, W_ACH, W_SHAPE = 1.0, 1.0, 0.5
 ACCEPT_MAX = 0.60           # the best item counts if it is this close...
@@ -59,7 +61,7 @@ def _normalise(rgb):
     return cv2.resize(rgb[y0:y1, x0:x1], (N, N), interpolation=cv2.INTER_AREA)
 
 
-def is_item_slot(rgb):
+def is_item_slot(rgb, style="keyboard"):
     """The slot has the light slot background along its edges (not the pink Attack tile, not the dark world)."""
     g = _normalise(rgb).astype(int)
     bg = (g.min(axis=2) > 205) & ((g.max(axis=2) - g.min(axis=2)) < 38)
@@ -67,15 +69,15 @@ def is_item_slot(rgb):
     ring = np.zeros((N, N), bool)
     ring[:k] = ring[-k:] = True
     ring[:, :k] = ring[:, -k:] = True
-    return bg[ring].mean() >= RING_BG_MIN and bg.mean() >= BG_MIN_SHARE
+    return bg[ring].mean() >= (CONTROLLER_RING_BG_MIN if style == "controller" else RING_BG_MIN) and bg.mean() >= BG_MIN_SHARE
 
 
-def fingerprint(rgb, reference=False):
+def fingerprint(rgb, reference=False, style="keyboard"):
     """The slot's fingerprint (FINGERPRINT_LEN numbers), or None if it isn't an item slot or is empty.
 
     rgb is the whole slot square, any size. reference=True skips those two checks (for an icon
-    drawn on a plain slot background)."""
-    if not reference and not is_item_slot(rgb):
+    drawn on a plain slot background). style: the slot style it was cut from (potion_bar.STYLES)."""
+    if not reference and not is_item_slot(rgb, style):
         return None
     g = _normalise(rgb)
     hsv = cv2.cvtColor(g, cv2.COLOR_RGB2HSV).astype(np.float32)
@@ -111,11 +113,16 @@ class PotionTable:
         self.names = [i["name"] for i in self.items]
         self.kinds = [i.get("kind", "consumable") for i in self.items]
         self.matrix = np.array([i["fingerprint"] for i in self.items], np.float32).reshape(-1, FINGERPRINT_LEN)
-        # items recorded on real slots also carry "seen": fingerprints measured there (one per UI mode); an item is
-        # as close as its closest one
-        rows = [(k, fp) for k, i in enumerate(self.items) for fp in i.get("seen", ())]
-        self.seen_owner = np.array([k for k, _ in rows], int)
-        self.seen_matrix = np.array([fp for _, fp in rows], np.float32).reshape(-1, FINGERPRINT_LEN)
+        # the icon drawn the way the controller's slot draws it (where the table has one: else the keyboard's drawing)
+        self.matrix_controller = np.array([i.get("fingerprint_controller") or i["fingerprint"] for i in self.items],
+                                          np.float32).reshape(-1, FINGERPRINT_LEN)
+        # items recorded on real slots also carry "seen" (keyboard slots) and "seen_controller" (controller slots):
+        # fingerprints measured there (one per UI mode and brightness); an item is as close as its closest one
+        self.seen_owner, self.seen_matrix = {}, {}
+        for style, key in (("keyboard", "seen"), ("controller", "seen_controller")):
+            rows = [(k, fp) for k, i in enumerate(self.items) for fp in i.get(key, ())]
+            self.seen_owner[style] = np.array([k for k, _ in rows], int)
+            self.seen_matrix[style] = np.array([fp for _, fp in rows], np.float32).reshape(-1, FINGERPRINT_LEN)
         self.prices = {i["name"]: i for i in items}
 
     @classmethod
@@ -127,11 +134,11 @@ class PotionTable:
 
     aliases = {}
 
-    def distances(self, vec):
-        """How far a slot's fingerprint is from every item's (smaller is closer)."""
-        d = self._distances(self.matrix, vec)
-        if len(self.seen_owner):
-            np.minimum.at(d, self.seen_owner, self._distances(self.seen_matrix, vec))
+    def distances(self, vec, style="keyboard"):
+        """How far a slot's fingerprint is from every item's (smaller is closer). style: the slot style it was cut from."""
+        d = self._distances(self.matrix_controller if style == "controller" else self.matrix, vec)
+        if len(self.seen_owner[style]):
+            np.minimum.at(d, self.seen_owner[style], self._distances(self.seen_matrix[style], vec))
         return d
 
     @staticmethod
@@ -142,15 +149,18 @@ class PotionTable:
         shape = np.abs(m[:, n + 3:] - vec[n + 3:]).mean(1)
         return W_COL * col + W_ACH * ach + W_SHAPE * shape * 4.0
 
-    def identify(self, vec):
-        """(name, kind, distance) of the item the fingerprint clearly is, or None when it isn't clearly one."""
+    def identify(self, vec, style="keyboard"):
+        """(name, kind, distance) of the item the fingerprint clearly is, or None when it isn't clearly one. An item
+        counts as seen when it was recorded on a real slot of this style."""
         if vec is None or not len(self.items):
             return None
-        d = self.distances(vec)
+        d = self.distances(vec, style)
         order = np.argsort(d)
         best = order[0]
-        second = d[order[1]] if len(order) > 1 else float("inf")
-        seen = bool(self.items[best].get("seen"))
+        # (a skill icon that looks like another skill icon is no doubt: only a potion or food near it is)
+        rest = [k for k in order[1:] if self.kinds[best] != "skill" or self.kinds[k] != "skill"]
+        second = d[rest[0]] if rest else float("inf")
+        seen = bool(self.items[best].get("seen_controller" if style == "controller" else "seen"))
         if d[best] <= (ACCEPT_MAX if seen else UNSEEN_MAX) and second >= (MIN_RATIO if seen else UNSEEN_RATIO) * d[best]:
             return self.names[best], self.kinds[best], float(d[best])
         return None
