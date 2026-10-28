@@ -1981,7 +1981,14 @@ check("part shadow: switched off runs nothing and counts nothing", unit.look(150
 
 # through the real reader: the parts' shadows ride along in the Reading, today's reading is untouched
 plain = shadow_reader(False)
-r = shadow_reader(True)
+plain.shadows["mesos"].on = False                      # (this helper leaves the parts' shadows on)
+def quiet(rd):
+    """(the scan's own v2 look at the mesos, while today's reader sees no box, is left out of these checks)"""
+    rd.shadows["mesos"].nobar_at = m.time.monotonic()
+    return rd
+
+
+r = quiet(shadow_reader(True))
 orig_extras = r._read_extras
 
 
@@ -2001,7 +2008,7 @@ check("shadow parts: the counts are kept per part", r.shadows["mesos"].counts["a
       and r.shadows["exp"] is r.shadow)
 again = r.read(fscreen)
 check("shadow parts: each look starts with none (a look where no part ran has no notes)", [p for p, _, _ in again.shadows] == ["mesos", "party"])
-r2 = shadow_reader(True)
+r2 = quiet(shadow_reader(True))
 check("shadow parts: no part ran, no notes", r2.read(fscreen).shadows == ())
 r.set_shadow(False)
 off = r.read(fscreen)
@@ -2010,12 +2017,12 @@ check("shadow parts: shadow_reader false switches every part off (EXP's too) and
 r.set_shadow(True)
 check("shadow parts: ...and back on", all(each.on for each in r.shadows.values()))
 
-glue = shadow_reader(True)
+glue = quiet(shadow_reader(True))
 glue_orig = glue._read_extras
 
 
 def extras_failing(capture, rect, reading):
-    glue.shadows["mesos"].look = lambda *a, **k: 1 / 0         # (a failure in the code around v2, outside its own guard)
+    glue.shadows["mesos"].look = lambda old, ms, run, searching=False: None if searching else 1 / 0     # (a failure in the code around v2, outside its own guard; the scan's own search look is left alone)
     glue.shadow_part("mesos", 1500, 3.0, lambda: (1500, "ok"))
     return glue_orig(capture, rect, reading)
 
@@ -2056,5 +2063,60 @@ check("shadow parts: the details text has a 'Reader v2 (test)' part for each par
       "== Reader v2 (test): Mesos ==" in text and "== Reader v2 (test): Party size ==" in text and "Last answers: old 1,500, v2 1,500" in text
       and "Old reader only, by why v2 didn't read: not_found 0, unclear 0" in text)
 check("shadow parts: the details text still works without them (older facts)", "Reader v2 (test): Mesos" not in report.details({"shadow": {}}))
+# ---- reader v2 for the mesos box rides beside today's reader (ticket 13): same pictures, no extra grabs
+import glyphs  # noqa: E402
+
+
+def v2_box_scene(value, win_w=1280, win_h=720):
+    """A game window (UI at 1x) with a mesos box in it: frame, coin, white inside, the number from the mesos font."""
+    img = np.full((win_h, win_w, 3), 40, np.uint8)
+    x0, y0 = 60, 300
+    img[y0 + 1:y0 + 15, x0 + 1:x0 + 144] = 255
+    img[y0, x0:x0 + 145] = img[y0 + 15, x0:x0 + 145] = 83
+    img[y0:y0 + 16, x0] = img[y0:y0 + 16, x0 + 144] = 83
+    cv2.circle(img, (x0 - 9, y0 + 7), 5, (30, 170, 220), -1)
+    font, right = glyphs.Font.load("mesos"), x0 + 144 - 4
+    for ch in reversed(f"{value:,}"):
+        ys, xs = np.nonzero(font.glyphs[ch])
+        img[y0 + 4 + ys, right - 4 + xs] = 0
+        right -= 4 if ch == "," else 6
+    return img
+
+
+v2 = shadow_reader(True)
+v2.gh = 7
+check("mesos v2 through the reader: the box in a window picture reads", v2._v2_mesos(v2_box_scene(24697), 720) == (24697, "ok"))
+check("mesos v2 through the reader: a picture without a box is not_found", v2._v2_mesos(np.full((720, 1280, 3), 40, np.uint8), 720) == (None, "not_found"))
+v2._v2_mesos(v2_box_scene(24697), 720, keep=True)
+check("mesos v2 through the reader: the box's own picture keeps the spot it read at", v2.mesos_v2_last is not None
+      and v2._v2_mesos(v2_box_scene(24697), 720, keep=True) == (24697, "ok"))
+before = v2.shadows["mesos"].counts["skipped"]
+v2._v2_mesos_skipped()
+check("mesos v2 through the reader: a trade window or two boxes is counted as skipped, nothing is run",
+      v2.shadows["mesos"].counts["skipped"] == before + 1 and v2.shadows["mesos"].counts["runs"] == 0)
+v2.set_shadow(False)
+v2._v2_mesos_skipped()
+check("mesos v2 through the reader: switched off counts nothing", v2.shadows["mesos"].counts["skipped"] == before + 1)
+v2.set_shadow(True)
+
+# a scan look where today's reader finds no box (no learned digits and no Tesseract needed: it finds nothing) lets v2 look on its own
+scan = shadow_reader(True)
+scan.gh = 7
+scan_img = v2_box_scene(24697)
+scan_img[290:320, 40:230] = 40                                   # (today's finder has nothing to find: the box is gone)
+res = scan.shadow_part("mesos", None, 0.0, lambda: scan._v2_mesos(scan_img, 720), searching=True)
+check("mesos v2: a look with no box on either side is neither", res is not None and res.category == "neither" and res.why == "not_found")
+res = scan.shadow_part("mesos", None, 0.0, lambda: scan._v2_mesos(v2_box_scene(24697), 720), searching=True)
+check("mesos v2: while today's reader finds no box v2 searches only now and then", res is None)
+live = shadow_reader(True)
+live.gh = 7
+res = live.shadow_part("mesos", None, 0.0, lambda: live._v2_mesos(v2_box_scene(24697), 720), searching=True)
+check("mesos v2: a box only v2 reads is v2_only", res is not None and res.category == "v2_only" and res.answer == 24697)
+res = live.shadow_part("mesos", 24697, 4.0, lambda: live._v2_mesos(v2_box_scene(24697), 720, keep=True))
+check("mesos v2: the same number on both sides is agree", res.category == "agree")
+res = live.shadow_part("mesos", 24698, 4.0, lambda: live._v2_mesos(v2_box_scene(24697), 720, keep=True))
+check("mesos v2: a different number is disagree (counted, never shown to the player)", res.category == "disagree")
+
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

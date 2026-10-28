@@ -1,4 +1,4 @@
-"""Builds assets/fonts_v2/potion_count.json: the game's potion-count font (see glyphs.py for the asset format).
+"""Builds the game's fonts for reader v2 (see glyphs.py for the asset format): potion_count and mesos.
 
 The count digits are a 6 x 9 pixel font with a vertical colour gradient (white at the top, light blue at the
 bottom) and a one pixel black outline, drawn on the 1024 x 768 design area. At UI Size Ideal (2x) the picture is
@@ -7,6 +7,7 @@ frames pixel for pixel. Other sizes show the same font smoothed up (glyphs.py dr
 
 Usage (from the repo root):
     python -I tools/make_font.py potion_count <truth_tune.json> [out.json]
+    python -I tools/make_font.py mesos <other_truth_tune.json> [out.json]
   truth_tune.json: the potion test library's tune truth (frames with each slot's rectangle, count and quality;
   the pictures are read from its "root" folder). Only TUNE frames: the gate is never looked at. Only frames at
   exactly 1x and 2x (UI Size Ideal) are used for the shapes; the text's place in each slot style is then found
@@ -227,7 +228,55 @@ def text_places(font_data, truth):
             for style, v in offsets.items()}
 
 
+MESOS_OUT = ROOT / "assets" / "fonts_v2" / "mesos.json"
+MESOS_ROWS, MESOS_W = 10, 5
+MESOS_PITCH, MESOS_COMMA = 6, 4         # how far the next cell (to the left) starts after a digit / a comma
+MESOS_RIGHT, MESOS_TOP = 3, 3           # the last digit's right column is 3 pixels in from the box's right edge; text starts 3 rows down
+INK_DROP = 60                           # a pixel is ink when it is this much darker than the cell's lightest tenth
+
+
+def mesos_font(truth):
+    """The mesos digits: 5 x 8 pixels, one pixel strokes, no outline, plus a comma that hangs two rows lower.
+    The number is right aligned in its box, so every cell's place is known from the box's right edge: the
+    cells of every clean 1x inventory box (UI Size Ideal below 1440 tall is not scaled at all) are cut out, a
+    pixel is ink when it is clearly darker than the lightest of its cell, and a pixel belongs to a glyph when
+    most cuts of that glyph have it as ink."""
+    root = Path(truth["root"])
+    cuts = {}
+    for f in truth["frames"]:
+        m = f.get("mesos")
+        if not m or abs(f["scale"] - 1.0) > 0.01:
+            continue
+        img = None
+        for b in m["boxes"]:
+            if b["kind"] != "inventory" or b["quality"] != "clean" or b["unreadable"] or b["value"] is None:
+                continue
+            if img is None:
+                img = cv2.imread(str(root / f["path"])).mean(axis=2)
+            x, y, w, h = b["rect"]
+            right = x + w - MESOS_RIGHT
+            for ch in reversed(f"{b['value']:,}"):
+                cell = img[y + MESOS_TOP:y + MESOS_TOP + MESOS_ROWS, right - MESOS_W + 1:right + 1]
+                cuts.setdefault(ch, []).append(cell < np.percentile(cell, 90) - INK_DROP)
+                right -= MESOS_COMMA if ch == "," else MESOS_PITCH
+    out = {}
+    for ch in DIGITS + ",":
+        a = np.stack(cuts[ch]).mean(axis=0)
+        out[ch] = {"rows": ["".join("X" if v > 0.5 else "." for v in row) for row in a], "adv": MESOS_COMMA if ch == "," else MESOS_PITCH,
+                   "cuts": len(cuts[ch])}
+    return {"name": "mesos", "fill": [[0, 0, 0]] * MESOS_ROWS, "outline": {"rule": "none", "color": [0, 0, 0]}, "glyphs": out,
+            "layout": {"pitch": MESOS_PITCH, "comma": MESOS_COMMA, "right": MESOS_RIGHT, "top": MESOS_TOP}}
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "mesos":
+        font = mesos_font(json.loads(Path(sys.argv[2]).read_text()))
+        out = Path(sys.argv[3]) if len(sys.argv) > 3 else MESOS_OUT
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(font, indent=1) + "\n")
+        print({ch: g["cuts"] for ch, g in font["glyphs"].items()})
+        print("wrote", out)
+        return
     if len(sys.argv) < 3 or sys.argv[1] != "potion_count":
         sys.exit(__doc__)
     truth = json.loads(Path(sys.argv[2]).read_text())
