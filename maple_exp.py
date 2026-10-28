@@ -56,6 +56,7 @@ import healthlog
 import level_ocr
 import mesos_v2
 import ocr
+import party_v2
 import potion_bar
 import potions
 import report
@@ -1831,6 +1832,7 @@ class ScreenReader:
         self.bar_runs = {}          # slot index -> the count reader's Run at the last look (checked first next time)
         self.next_outline = 0.0     # the earliest time to search for a see-through mesos box again
         self.party_area = None      # where the party list was last seen, on screen
+        self._party_last = None     # reader v2's last party look (its UI scale is tried first)
         self.next_scan = 0.0
         self.own_rect = None        # this app's window, which screenshots can't see through
         self.look_again_requested = False
@@ -2425,8 +2427,14 @@ class ScreenReader:
                     if area and self._blocked(*area):
                         notes.append("This window is covering the party list.")
                     else:
+                        t0 = time.perf_counter()
                         bars = find_party_bars(img, g, hsv)
                         party = max(1, len(bars))
+                        old_ms = (time.perf_counter() - t0) * 1000
+                        # Reader v2 counts them by shape beside today's reader, on the same picture (no extra grab).
+                        # It keeps nothing of the picture, and never reads a name.
+                        self.shadow_part("party", party, old_ms, lambda: self._party_v2(img, hsv, wh),
+                                         searching=len(bars) < 2)
                         if len(bars) >= 2:
                             x0, y0 = min(b[0] for b in bars), min(b[1] for b in bars)
                             x1, y1 = max(b[0] + b[2] for b in bars), max(b[1] + b[3] for b in bars)
@@ -2469,6 +2477,13 @@ class ScreenReader:
                                 mesos_at=moved, window=window, bar=bar, note=" ".join(notes) or None,
                                 layout=bar.layout if bar is not None and bar.seen else None,
                                 ui=bar.mode if bar is not None and bar.seen else None)
+
+    def _party_v2(self, img, hsv, wh):
+        """Reader v2's party size on a grab of the game window: (answer, why) for the shadow."""
+        hint = ui_layout.mode_from_gh(self.gh, wh) if self.gh else None
+        look = party_v2.read_party_v2(img, hint, self._party_last, hsv)
+        self._party_last = look if look.scale else self._party_last
+        return look.count, look.why
 
     def _read_potion_bar(self, capture, rect, notes):
         """What the potion bar shows as a potion_bar.PotionLook, or None when there is nothing to report (the
