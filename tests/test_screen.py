@@ -1435,6 +1435,13 @@ try:
     second = unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)])
     check("shadow: a look between whole searches tries only the boxes (nothing there = not a look, no count)",
           first is not None and second is None and calls[-1] is False and unit.counts["neither"] + unit.counts["old_only"] + unit.counts["v2_only"] == 1)
+    unit.times.extend([(10.0, 9.0)] * shadow_mod.GUARD_MIN)     # (v2 at 90% of today's: the guard thins it to every other look)
+    before = unit.counts["skipped"]
+    thin = [unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)]) for _ in range(6)]
+    check("shadow: while the guard thins v2, a quick look it doesn't take isn't counted as skipped (only real looks are)",
+          all(t is None for t in thin) and unit.counts["skipped"] == before)
+    unit.times.clear()
+    unit.thinned = False
     check("shadow: ...and the EXP no-bar interval is the one measured (15 s)", shadow_mod.NOBAR_BY_PART["exp"] == 15)
     check("shadow: ...and those slow searches never turn v2 off (the guard compares looks where both had the bar)",
           not unit.stopped and not unit.thinned and len(unit.times) == 0)

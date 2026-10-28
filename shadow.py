@@ -213,6 +213,8 @@ class Shadow(_Guarded):
             else:
                 self.nobar_at = time.monotonic()
         if not self._allowed():
+            if quick:
+                return None             # (a quick look is only a look when it finds the bar: one not taken isn't counted)
             self.counts["skipped"] += 1
             return Result("skipped", None, None, None)
         t0 = self.timer()
