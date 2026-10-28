@@ -1667,6 +1667,35 @@ w.look(plook(s0=("Lemon", 26)), after=60)
 w.look(plook(s0=("Lemon", 26)), after=60)
 check(f"...also with a long time between the looks ({w.t.used})", not w.t.used)
 
+# the mouse cursor over a count's last digits: 224 reads as 22 or 2 (a leading-digit prefix) and is never use
+w = Watch()
+w.look(plook(s0=("Lemon", 224)))
+for n in (22, 22, 2, 224, 224):                      # the cursor rests over two looks, moves on, comes off
+    w.look(plook(s0=("Lemon", n)))
+check(f"224 read as 22 and 2 while the cursor rests there is never use ({w.t.used})", not w.t.used)
+w.look(plook(s0=("Lemon", 223)))
+check(f"...and a real use afterwards still counts ({w.t.used})", w.t.used == {"Lemon": 1})
+w = Watch()
+w.look(plook(s0=("Lemon", 10)))
+w.look(plook(s0=("Lemon", 1)))
+w.look(plook(s0=("Lemon", 10)))
+check(f"10 read as 1 is never use, at the edge of two digits ({w.t.used})", not w.t.used)
+w = Watch()
+w.look(plook(s0=("Lemon", 13)))
+w.look(plook(s0=("Lemon", 1)), after=300)
+w.look(plook(s0=("Lemon", 13)), after=3)
+check(f"13 read as 1 after a long time out of sight is never use ({w.t.used})", not w.t.used)
+w = Watch()
+w.look(plook(s0=("Lemon", 13)))
+w.look(plook(s0=("Lemon", 1)))
+w.look(plook(s0=("Lemon", 0)))
+check(f"a real drink that ends on a prefix (13 to 1) is not counted: accepted cost, but later use is ({w.t.used})",
+      w.t.used == {"Lemon": 1})
+w = Watch()
+for n in (100, 99, 9):                               # 99 -> 9 is a prefix, 100 -> 99 is not
+    w.look(plook(s0=("Lemon", n)))
+check(f"only a leading-digit prefix re-bases: 100 to 99 counts, 99 to 9 does not ({w.t.used})", w.t.used == {"Lemon": 1})
+
 # a shop, storage or trade window starts everything over
 w = Watch()
 w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))

@@ -22,7 +22,7 @@ HUE_BINS = 12
 BAND_COLS = 8
 SHRINK = 0.04               # few coloured pixels give small numbers
 BG_MIN_SHARE = 0.12         # an item slot is at least this share light slot background...
-RING_BG_MIN = 0.32          # ...and this share of its edge ring (the pink Attack tile has 0.20)
+RING_BG_MIN = 0.35          # ...and this share of its edge ring (the pink Attack tile has 0.20)
 EMPTY_INK_MAX = 0.03        # a slot with less than this beyond its background is empty
 W_COL, W_ACH, W_SHAPE = 1.0, 1.0, 0.5
 ACCEPT_MAX = 0.60           # the best item counts if it is this close...
@@ -273,6 +273,11 @@ class PotionTracker:
     def _count(self, stack, count, counting, now):
         before, undo = stack.count, stack.last_use
         stack.last_use = None
+        if count < before and str(before).startswith(str(count)):
+            # "224" read as "22" or "2": the mouse cursor or a popup hides the last digits (a drink that really ends
+            # on such a count, 13 -> 1, is lost too: accepted); never a use, the count starts over from here
+            stack.count, stack.seen, stack.pending = count, now, None
+            return
         if counting and count < before:
             drop = before - count
             if drop <= allowed_drop(now - stack.seen):      # (more than drinking explains: it just starts over)
