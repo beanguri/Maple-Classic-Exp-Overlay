@@ -1416,11 +1416,18 @@ for read, want in {"Tree Dungeon Forest Up North Vil": "Tree Dungeon Forest Up N
 
 # ---- potion use: a slot's count going down while tracking runs
 import potions  # noqa: E402
+import potion_bar  # noqa: E402
 
 
 def bar(*items):
     """What the potion bar shows: (name, count) in slot order, four to a row."""
-    return [potions.Slot(i % 4, i // 4, name, count) for i, (name, count) in enumerate(items)]
+    return slots_at({i: item for i, item in enumerate(items)})
+
+
+def slots_at(items):
+    """A look at the keyboard bar with these {slot index: (name, count)}; no items is a bar that isn't there."""
+    return potion_bar.PotionLook(bool(items), "keyboard", "default", 1.4, tuple(
+        potion_bar.SlotRead(i, None, "keyboard", name, "consumable", count) for i, (name, count) in sorted(items.items())))
 
 
 def seen(s, slots, after=3):
@@ -1483,7 +1490,7 @@ seen(s, bar(("Red Potion", 100)))
 seen(s, bar(("Red Potion", 99)))
 check("nothing counts before Start", not s.potions.used)
 s.start(clock[0])
-seen(s, [])
+seen(s, bar())
 seen(s, bar(("Scroll", None)))
 check("a bar with no consumables (or no readable count) does nothing", not s.potions.used)
 
@@ -1592,7 +1599,7 @@ for how in ("pause", "reset", "map", "idle"):
     s.start(clock[0])
     gains(s, 30)
     seen(s, bar(("Red Potion", 100)))
-    seen(s, [])                                                              # the bar is out of sight
+    seen(s, bar())                                                              # the bar is out of sight
     if how == "pause":
         s.pause()
     elif how == "reset":
@@ -1621,7 +1628,7 @@ s = session()
 s.start(clock[0])
 gains(s, 30)
 seen(s, bar(("Red Potion", 100)))
-seen(s, [])
+seen(s, bar())
 seen(s, bar(("Red Potion", 94)), 9)
 check(f"...but out of sight while tracking ran the whole time it is counted ({s.potions.used})", s.potions.used == {"Red Potion": 6})
 w = Watch()
@@ -1694,13 +1701,6 @@ w = Watch()
 for n in (326, 320, 326):
     w.look(plook(s0=("Lemon", n)))
 check(f"a small misread that is gone at the next look is taken back ({w.t.used})", sum(w.t.used.values()) == 0)
-
-# today's reader's answer is the same thing as a keyboard look
-legacy = potions.look_from_slots(bar(("Red Potion", 100), ("Blue Potion", None), ("Lemon", 5), ("Orange", 7), ("Sap", 3)))
-check("today's reader's answer becomes a keyboard-layout look (4 to a row)",
-      legacy.seen and legacy.layout == "keyboard" and [s.index for s in legacy.slots] == [0, 1, 2, 3, 4]
-      and legacy.slots[4].count == 3 and legacy.slots[1].count is None)
-check("...and an empty answer is a look with no bar", not potions.look_from_slots(()).seen)
 
 # ---- potion prices: the shipped defaults, the player's own prices on top
 ITEMS = {"Red Potion": {"price": 50, "unpriced": False}, "Blue Potion": {"price": 220, "unpriced": False},
@@ -1877,8 +1877,8 @@ s = session()
 s.start(clock[0])
 gains(s, 30)
 seen(s, bar(("Lemon", 100)))
-seen(s, [potions.Slot(1, 0, "Lemon", 100)])          # the stack dragged one slot to the right
-seen(s, [potions.Slot(1, 0, "Lemon", 95)])
+seen(s, slots_at({1: ("Lemon", 100)}))          # the stack dragged one slot to the right
+seen(s, slots_at({1: ("Lemon", 95)}))
 seen(s, bar(("Lemon", 95)))                          # ...and back
 seen(s, bar(("Lemon", 95)))
 check(f"a stack moved and moved back counts only what was used ({s.potions.used})", s.potions.used == {"Lemon": 5})

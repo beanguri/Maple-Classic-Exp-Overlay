@@ -241,10 +241,14 @@ for name, info in sorted(PARTS["inventory"].items()):
     check(f"a trade window's covered mesos box is found and the offer boxes aren't, EXP digits {gh:.0f} px",
           found is not None and found[0] + found[2] == bx + bw and found[1] == by)
 
-# ---- the potion bar: drawn with simple icons and the game's count glyphs, at three screen sizes
+# ---- the potion bar: drawn with simple icons and the game's count glyphs, at several sizes and both UI sizes
 import potions  # noqa: E402
+import potion_bar  # noqa: E402
+import glyphs  # noqa: E402
+import ui_layout  # noqa: E402
 
-DIGITS = potions.load_digits(Path(m.ASSETS) / "potion_digits.npz")
+COUNT_FONT = glyphs.Font.load("potion_count")
+PLATE, FRAME = (250, 249, 248), (50, 45, 40)
 
 
 def draw_icon(slot, kind):
@@ -262,38 +266,31 @@ def draw_icon(slot, kind):
     cv2.circle(slot, c, int(w * 0.28), (40, 40, 40), 1)
 
 
-def draw_count(slot, count):
-    """The count at the slot's bottom left, in the game's glyphs (grey, as at 1080 p)."""
-    x = potions.DIGIT_X0
-    for ch in str(count):
-        t = DIGITS[ch].template
-        slot[potions.BAND[0]:potions.BAND[1], x:x + t.shape[1]] = np.repeat(np.clip(t, 0, 255).astype(np.uint8)[..., None], 3, 2)
-        x += t.shape[1]
-
-
-def make_bar(layout, height, offset=(0, 0), rows=3, background=None):
-    """A picture of the window's lower right at `height` p with the bar's slots as in layout
-    {(col, row): (icon, count)}. Returns (picture, estimated top left of the bar in it, UI scale)."""
-    s0 = 1080 / 2880
-    bw, bh = int(potions.BAR_W * s0) + 16, int(potions.BAR_H * s0) + 16
-    img = np.full((bh, bw, 3), (70, 62, 58), np.uint8) if background is None else background.copy()
-    for row in range(3 - rows, 3):
-        for col in range(4):
-            x, y, w, h = potions.slot_rect(col, row, s0, 8 + offset[0], 8 + offset[1])
-            slot = np.full((h, w, 3), (250, 249, 248), np.uint8)
-            if (col, row) in layout:
-                icon, count = layout[(col, row)]
-                if icon == "skill":
-                    slot[:] = (150, 130, 190)
-                else:
-                    draw_icon(slot, icon)
-                    if count is not None:
-                        draw_count(slot, count)
-            img[y:y + h, x:x + w] = slot
-    k = height / 1080
-    if k != 1:
-        img = cv2.resize(img, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
-    return img, (8 * k, 8 * k), height / 2880
+def make_window(layout, width, height, scale, shift=(0, 0), rows=3, cover=None):
+    """A game window picture (BGR) with the keyboard bar at this UI scale: slots {index: (icon, count)}, the game's
+    count glyphs drawn smoothed (or copied block for block at a whole step) as the game scales them.
+    `cover`: a flat box drawn over the right part of the slots' counts."""
+    pic = np.full((height, width, 3), (70, 62, 58), np.float32)
+    rects = potion_bar.keyboard_rects(width, height, scale, shift)
+    ox, oy = COUNT_FONT.styles["keyboard"]["origin"]
+    for index in range(4 * (3 - rows), 12):
+        x, y, w, h = rects[index]
+        t = max(1, int(round(scale)))
+        pic[y - t:y + h + t, x - t:x + w + t] = FRAME
+        slot = np.full((h, w, 3), PLATE, np.uint8)
+        icon, count = layout.get(index, (None, None))
+        if icon == "skill":
+            slot[:] = (150, 130, 190)
+        elif icon:
+            draw_icon(slot, icon)
+        pic[y:y + h, x:x + w] = slot
+        if icon and icon != "skill" and count is not None:
+            p = glyphs.draw(COUNT_FONT, str(count), scale, x + (ox + 0.37) * scale, y + h + (oy + 0.61) * scale, pic.shape[:2],
+                            "point" if abs(scale - round(scale)) < 0.01 else "bilinear")
+            pic = pic * (1 - p[0])[:, :, None] + np.transpose(p[1:], (1, 2, 0))
+            if cover:
+                pic[int(y + 0.5 * h):y + h, int(x + cover * w):x + w] = 60
+    return np.clip(np.round(pic), 0, 255).astype(np.uint8)
 
 
 def test_table():
@@ -303,81 +300,80 @@ def test_table():
                              ("Orange", "orange", "consumable"), ("Return Scroll", "scroll", "other_ignore")):
         slot = np.full((44, 46, 3), (250, 249, 248), np.uint8)
         draw_icon(slot, icon)
-        items.append({"name": name, "kind": kind,
-                      "fingerprint": [float(v) for v in potions.fingerprint(cv2.cvtColor(slot, cv2.COLOR_BGR2RGB), True)]})
+        fp = [float(v) for v in potions.fingerprint(cv2.cvtColor(slot, cv2.COLOR_BGR2RGB), True)]
+        items.append({"name": name, "kind": kind, "fingerprint": fp, "seen": [fp]})      # (as if recorded on a real slot)
     return potions.PotionTable(items)
 
 
 TABLE = test_table()
-LAYOUT = {(0, 0): ("orange", 5), (1, 0): ("red", 18), (2, 0): ("blue", 100), (3, 0): ("red", 0),
-          (0, 1): ("skill", None), (1, 1): ("blue", 37), (2, 1): ("scroll", 500), (3, 1): ("orange", 321),
-          (0, 2): ("red", 17), (1, 2): ("blue", 85), (2, 2): ("orange", 9), (3, 2): ("red", 21)}
-WANT = {(0, 0): ("Orange", 5), (1, 0): ("Red Potion", 18), (2, 0): ("Blue Potion", 100), (3, 0): ("Red Potion", 0),
-        (1, 1): ("Blue Potion", 37), (3, 1): ("Orange", 321), (0, 2): ("Red Potion", 17), (1, 2): ("Blue Potion", 85),
-        (2, 2): ("Orange", 9), (3, 2): ("Red Potion", 21)}
-for height in (1080, 1200, 1440):
-    for offset in ((0, 0), (2, -2), (-2, 1)):
-        img, origin, scale = make_bar(LAYOUT, height, offset)
-        slots, _ = potions.read_bar(img, scale, origin, TABLE, DIGITS)
-        got = {(sl.col, sl.row): (sl.name, sl.count) for sl in slots}
-        check(f"the potion bar is read right at {height} p, bar {offset} px off: potions and counts, skills and "
-              f"other items left out ({len(got)} slots)", got == WANT)
+LAYOUT = {0: ("orange", 5), 1: ("red", 18), 2: ("blue", 100), 3: ("red", 0), 4: ("skill", None), 5: ("blue", 37),
+          6: ("scroll", 500), 7: ("orange", 321), 8: ("red", 17), 9: ("blue", 85), 10: ("orange", 9), 11: ("red", 21)}
+WANT = {0: ("Orange", 5), 1: ("Red Potion", 18), 2: ("Blue Potion", 100), 3: ("Red Potion", 0), 5: ("Blue Potion", 37),
+        7: ("Orange", 321), 8: ("Red Potion", 17), 9: ("Blue Potion", 85), 10: ("Orange", 9), 11: ("Red Potion", 21)}
 
-img, origin, scale = make_bar({(1, 1): ("red", 12), (2, 1): ("blue", 3), (1, 2): ("orange", 40)}, 1080, rows=2)
-slots, _ = potions.read_bar(img, scale, origin, TABLE, DIGITS)
-check("a 2-row bar is read: only its two rows", {(s.col, s.row, s.name, s.count) for s in slots} ==
-      {(1, 1, "Red Potion", 12), (2, 1, "Blue Potion", 3), (1, 2, "Orange", 40)})
-slots, _ = potions.read_bar(*(lambda a: (a[0], a[2], a[1]))(make_bar({}, 1080)), TABLE, DIGITS)
-check("a bar with nothing on it reads nothing", slots == [])
-noise = np.random.default_rng(3).integers(0, 255, (199, 241, 3), dtype=np.uint8)
-slots, _ = potions.read_bar(noise, 1080 / 2880, (8, 8), TABLE, DIGITS)
-check("a screen with no bar reads nothing", slots == [])
-img, origin, scale = make_bar({(0, 0): ("red", None), (1, 0): ("blue", None)}, 1080)
-slots, _ = potions.read_bar(img, scale, origin, TABLE, DIGITS)
+
+def potions_of(look):
+    return {s.index: (s.item, s.count) for s in look.slots if s.kind == "consumable"}
+
+
+for (width, height), mode in (((1920, 1080), "default"), ((1920, 1080), "ideal"), ((2560, 1440), "default"),
+                              ((2560, 1440), "ideal"), ((1280, 720), None), ((3840, 2160), "ideal")):
+    scale = ui_layout.default_scale(height) if mode in ("default", None) else float(ui_layout.ideal_step(height))
+    for shift in ((0, 0), (2, -2), (-2, 1)):
+        look = potion_bar.read_potions(make_window(LAYOUT, width, height, scale, shift), width, height, assets=TABLE)
+        check(f"the potion bar is read right at {width}x{height}, UI size {mode or 'either'}, bar {shift} px off: potions and "
+              f"counts, skills and other items left out", look.seen and potions_of(look) == WANT and look.layout == "keyboard"
+              and abs(look.scale / scale - 1) < 0.02 and look.mode in (mode, None))
+        kinds = {s.index: s.kind for s in look.slots}
+        check("...the scroll is 'other' and the skill isn't taken for a potion", kinds.get(6) == "other" and 4 not in potions_of(look))
+
+width, height = 1920, 1080
+scale = ui_layout.default_scale(height)
+two = {i: v for i, v in LAYOUT.items() if i >= 4}
+look = potion_bar.read_potions(make_window(two, width, height, scale, rows=2), width, height, assets=TABLE)
+check("a 2-row bar is read: only its two rows", look.seen and {s.index for s in look.slots} == set(range(4, 12))
+      and potions_of(look) == {i: v for i, v in WANT.items() if i >= 4})
+look = potion_bar.read_potions(make_window({}, width, height, scale), width, height, assets=TABLE)
+check("a bar with nothing on it reads no potions", look.seen and not potions_of(look))
+noise = np.random.default_rng(3).integers(0, 255, (height, width, 3), dtype=np.uint8)
+check("a screen with no bar reads 'not seen'", not potion_bar.read_potions(noise, width, height, assets=TABLE).seen)
+check("...and so does a flat dark screen (login, loading)",
+      not potion_bar.read_potions(np.full((height, width, 3), 20, np.uint8), width, height, assets=TABLE).seen)
+look = potion_bar.read_potions(make_window({0: ("red", None), 1: ("blue", None)}, width, height, scale), width, height, assets=TABLE)
 check("a known icon with no number is kept with no count (never a made-up one)",
-      {(s.col, s.row, s.name, s.count) for s in slots} == {(0, 0, "Red Potion", None), (1, 0, "Blue Potion", None)})
+      potions_of(look) == {0: ("Red Potion", None), 1: ("Blue Potion", None)})
 wrong = []
-for count in (0, 1, 2, 5, 7, 8, 9, 10, 11, 16, 20, 33, 44, 59, 60, 71, 88, 99, 100, 101, 123, 200, 321, 450, 666, 987):
-    img, origin, scale = make_bar({(1, 0): ("blue", count)}, 1080)
-    slots, _ = potions.read_bar(img, scale, origin, TABLE, DIGITS)
-    if [(sl.name, sl.count) for sl in slots] != [("Blue Potion", count)]:
-        wrong.append(count)
-check(f"counts from 0 to 987 are read back right ({wrong or 'all'})", not wrong)
+for count in (0, 1, 2, 5, 7, 8, 9, 10, 11, 16, 20, 33, 44, 59, 60, 71, 88, 99, 100, 101, 123, 200, 321, 450, 666, 987, 1234, 4567):
+    look = potion_bar.read_potions(make_window({5: ("blue", count)}, width, height, scale), width, height, assets=TABLE)
+    if potions_of(look) != {5: ("Blue Potion", count)}:
+        wrong.append((count, potions_of(look)))
+check(f"counts from 0 to 4567 are read back right ({wrong or 'all'})", not wrong)
+blur = cv2.GaussianBlur(make_window({5: ("blue", 37)}, width, height, scale), (0, 0), 4)
+look = potion_bar.read_potions(blur, width, height, assets=TABLE)
+check("a smeared bar gives no wrong number", all(c in (None, 37) for _, c in potions_of(look).values()))
+look = potion_bar.read_potions(make_window({5: ("blue", 224), 6: ("red", 153)}, width, height, scale, cover=0.45), width, height, assets=TABLE)
+check("a count whose last digits are hidden (the mouse cursor, a popup) is no number",
+      all(c is None for _, c in potions_of(look).values()))
 
-
-def draw_count_on_dark(slot, count):
-    """The count over a dark patch (the bottom of a bottle's outline): the glyphs' steady pixels as the
-    game draws them, the rest dark, as the background behind a digit varies from item to item."""
-    x = potions.DIGIT_X0
-    for ch in str(count):
-        t, mask = DIGITS[ch]
-        patch = np.where(mask > 0, t, 55).astype(np.uint8)
-        slot[potions.BAND[0]:potions.BAND[1], x:x + t.shape[1]] = np.repeat(patch[..., None], 3, 2)
-        x += t.shape[1]
-
-
-wrong = []
-for count in (21, 33, 49, 51, 18, 40, 98, 7):
-    bar, origin, scale = make_bar({(3, 0): ("red", None)}, 1080)
-    x, y, w, h = potions.slot_rect(3, 0, 1080 / 2880, 8, 8)
-    draw_count_on_dark(bar[y:y + h, x:x + w], count)
-    slots, _ = potions.read_bar(bar, scale, origin, TABLE, DIGITS)
-    if [(s.name, s.count) for s in slots] != [("Red Potion", count)]:
-        wrong.append((count, [s.count for s in slots]))
-check(f"a count over a dark background (the red potion's bottle) is read right ({wrong or 'all'})", not wrong)
-img, origin, scale = make_bar({(1, 0): ("blue", 37)}, 1080)
-blur = cv2.GaussianBlur(img, (0, 0), 4)
-slots, _ = potions.read_bar(blur, scale, origin, TABLE, DIGITS)
-check("a smeared bar gives no wrong number", all(sl.count in (None, 37) for sl in slots))
+# the hint: the last good spot (and the counts' Runs) are tried first, and a wrong hint costs nothing but time
+pic = make_window(LAYOUT, width, height, scale, (1, -1))
+first = potion_bar.read_potions(pic, width, height, assets=TABLE)
+hint = potion_bar.Hint(potion_bar.bar_from_look(first, width, height), None, {s.index: s.run for s in first.slots if s.run})
+again = potion_bar.read_potions(pic, width, height, hint=hint, assets=TABLE)
+check("with the last look as the hint the same answer comes back", potions_of(again) == WANT and again.slots[0].rect == first.slots[0].rect)
+moved = potion_bar.read_potions(make_window(LAYOUT, width, height, scale, (-1, 2)), width, height, hint=hint, assets=TABLE)
+check("...also when the bar has moved a little", potions_of(moved) == WANT)
+other = potion_bar.read_potions(make_window(LAYOUT, 2560, 1440, 2.0), 2560, 1440, hint=hint, assets=TABLE)
+check("...and when the hint is for another window size", potions_of(other) == WANT)
+check("a hint from the EXP bar's digit height puts its scale first",
+      potions_of(potion_bar.read_potions(pic, width, height, hint=potion_bar.Hint(None, ("default", scale)), assets=TABLE)) == WANT)
+check("a pic at the edge of the window (a strip) is read the same",
+      potions_of(potion_bar.read_potions(pic[600:], width, height, at=(0, 600), assets=TABLE)) == WANT)
 
 # ---- the reader looks at the potion bar every few seconds, and says so when this window is in the way
-scene = np.zeros((1080, 1920, 3), np.uint8)
-bar_img, origin, scale = make_bar(LAYOUT, 1080)
-ex, ey, _ = potions.bar_estimate(1920, 1080)
-bx, by = int(round(ex - origin[0])), int(round(ey - origin[1]))
-scene[by:by + bar_img.shape[0], bx:bx + bar_img.shape[1]] = bar_img
+scene = make_window(LAYOUT, 1920, 1080, ui_layout.default_scale(1080))
 reader = m.ScreenReader(m.DigitTemplates.load())
-reader.potion_table, reader.potion_digits = TABLE, DIGITS
+reader.potion_table = TABLE
 reader.gh = 11
 reader.mesos_digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
 blank = m.Reading(*([None] * len(m.Reading._fields)))
@@ -386,17 +382,27 @@ real_monotonic = m.time.monotonic
 m.time.monotonic = lambda: clock[0]
 try:
     r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
-    got = {(sl.col, sl.row): (sl.name, sl.count) for sl in (r.bar or ())}
-    check(f"the reader hands over what the potion bar shows ({len(got)} slots)", got == WANT)
+    check(f"the reader hands over what the potion bar shows ({len(potions_of(r.bar))} slots)",
+          r.bar is not None and r.bar.seen and potions_of(r.bar) == WANT)
+    check("...with the layout and UI size for the health report", r.layout == "keyboard" and r.ui == "default")
     r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
     check("...and not again before the next few seconds are up", r.bar is None)
     clock[0] += m.POTION_SECONDS + 0.1
     r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
-    check("...but then again, from where the bar was found (a small search)", {(sl.col, sl.row) for sl in r.bar} == set(WANT))
+    check("...but then again, from where the bar was found", potions_of(r.bar) == WANT and reader.bar_last is not None)
     clock[0] += m.POTION_SECONDS + 0.1
-    reader.own_rect = (bx, by, 200, 150)                     # this window on top of the bar
+    reader.own_rect = (0, 800, 1920, 280)                    # this window on top of the bar
     r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
-    check("this window covering the potion bar is said, and nothing is read", r.bar == () and "covering the potion bar" in (r.note or ""))
+    check("this window covering the potion bar is said, and nothing is read",
+          r.bar is not None and not r.bar.seen and "covering the potion bar" in (r.note or ""))
+    reader.own_rect = None
+    reader.bar_last = None
+    reader._tries = []
+    clock[0] += m.POTION_SECONDS + 0.1
+    r = reader._read_extras(FakeScreen(np.full((1080, 1920, 3), 20, np.uint8)), (0, 0, 1920, 1080), blank)
+    check("a screen with no bar is a look with no bar, and the next one waits longer (login, loading)",
+          r.bar is not None and not r.bar.seen and r.layout is None and reader.next_bar - clock[0] >= m.POTION_NOBAR_SECONDS - 0.1)
+    check("...and it isn't counted in the health report", ("potions", True) not in reader._tries and ("potions", False) not in reader._tries)
 finally:
     m.time.monotonic = real_monotonic
 
@@ -1101,10 +1107,15 @@ check("health: a screen with no bar is 'not_found'", r.read(blank_screen).exp_ki
 got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: (_ for _ in ()).throw(ValueError("x"))),
                                     setattr(r, "next_bar", 0.0)))
 check("health: a reader that failed is noted as tried and not worked", ("potions", False) in got.tries)
-got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: ()), setattr(r, "next_bar", 0.0)))
-check("health: a potion bar look that saw nothing is noted as tried and not read", got.tries == (("potions", False),))
-got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: ("slot",)), setattr(r, "next_bar", 0.0)))
-check("health: a potion bar look that read something is noted as read", got.tries == (("potions", True),))
+seen_look = lambda *counts: potion_bar.PotionLook(True, "keyboard", "default", 1.4, tuple(
+    potion_bar.SlotRead(i, (0, 0, 1, 1), "keyboard", "Lemon", "consumable", c) for i, c in enumerate(counts)))
+got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: potion_bar.NOT_SEEN), setattr(r, "next_bar", 0.0)))
+check("health: a potion bar look that saw no bar isn't counted at all", got.tries == ())
+got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: seen_look(5, 7)), setattr(r, "next_bar", 0.0)))
+check("health: a potion bar look that read every potion is noted as read", got.tries == (("potions", True),))
+got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **k: seen_look(5, None)), setattr(r, "next_bar", 0.0)))
+check("health: a potion bar look with a count it couldn't read is noted as not read", got.tries == (("potions", False),))
+check("health: ...and a seen bar gives the look its layout and UI size", got.layout == "keyboard")
 
 # A04 audit: every way out of a look sets exp_kind itself, and the looks add up in the health record
 r = part_reader()
