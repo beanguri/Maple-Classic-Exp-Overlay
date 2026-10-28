@@ -1,31 +1,78 @@
-"""Reading the character's level from the status bar's "LV." badge: white digits in an orange box, far
-left of the EXP bar. It is only used when the bar shows no EXP number, so the level can't come from
+"""Reading the character's level from the status bar's "LV." badge: white digits on orange tiles, one tile per digit,
+far left of the EXP bar. It is only used when the bar shows no EXP number, so the level can't come from
 number and % (see ExpTracker.observe_percent).
 
-The level is never guessed: the label "LV" has to be there, a complete box has to be found, and the
-digits are read at several sizes in one Tesseract run, which must agree. A box that is covered or cut
-off gives nothing. The character's name is never read as text (name_print below keeps only a small picture
-of it, in memory, to tell characters apart).
+The level is never guessed: the label "LV" has to be there, a complete box has to be found, and every digit is read
+by drawing the game's own badge digits (assets/fonts_v2/badge.json) at the window's UI scale and comparing them with
+the tile's pixels. A digit counts only when one digit fits the pixels and every other digit clearly doesn't; a box
+that is covered, cut off or blurred past that gives nothing. The character's name is never read as text
+(name_print below keeps only a small picture of it, in memory, to tell characters apart).
 """
-import re
-from collections import Counter
+import json
+from pathlib import Path
 
 import cv2
 import numpy as np
 
-SQUARE_RATIO = 0.87         # the badge's width over its height, for each digit's orange square
-VOTES = 4                    # of the 6 digit pictures of the first look, this many must read the same level
-SIZES = (64, 80)             # heights, in px, the digits are blown up to (grey picture)
-MASK_SIZES = (48, 64, 80, 96)    # ...and the black-and-white picture
-# A blurry badge (a compressed stream, a small window) isn't settled by those six. Then a wide set reads it many
-# more ways, and one level has to win clearly: at least WIDE_VOTES readings and twice any other level's (only
-# readings with the right number of digits, and a 1 only where the digit is narrow, count at all).
-WIDE_MARGINS = (0.04, 0.10, 0.18)        # how much of the badge's edge is cut off the digits' picture
-WIDE_SIZES = (48, 64, 80, 96)
-WIDE_KINDS = ("grey", "t80", "t100", "t130", "t160", "otsu", "usm", "usm_otsu")   # grey, black-and-white at a
-WIDE_VOTES = 4                           # few thresholds, Otsu's, and sharpened first (undoing some blur)
-NARROW = 0.50                            # a digit whose ink is under this share of its square's width is a 1 (measured on
-                                         # real frames, also shrunk to 720p: every 1 was 0.31-0.42, no other digit under 0.56)
+FONT_FILE = Path(__file__).resolve().parent / "assets" / "fonts_v2" / "badge.json"
+TILE_W, TILE_H, TILE_STEP = 11, 15, 12      # a digit's orange tile on the design area, and how far the next one starts
+BOX_H = 13                                   # the orange tile itself is 13 rows tall (the tile's 15-row picture has 2 rows of shade below)
+MIN_RANGE = 120                              # the tile's white must be at least this much brighter than its orange
+SIDE = 3                                     # how many design pixels right of the badge must be plain panel (nothing covering a tile)
+SIDE_FLAT = 10                               # ...each row of that strip varying no more than this
+GAP_2 = 15.0                                 # from the "LV" letters to the first tile, in design pixels, for a two-digit badge (measured
+GAP_TOL = 2.0                                # at every size; the badge is centred, so one more digit starts 6 px further left) +- this
+E_OK = 0.006                                 # the best digit's mean squared error (of 0..1 ink) can be at most this...
+E_RATIO, E_GAP = 3.0, 0.012                  # ...and the next digit's at least this many times and this much more
+COARSE = (-1.0, -0.5, 0.0, 0.5, 1.0)         # where the tile sits against the box found (pixels), first tried at these...
+FINE = (-0.25, -0.125, 0.0, 0.125, 0.25)     # ...then this far around the best of them
+_font = {}
+
+
+def font():
+    """{digit: 15 x 11 float picture (1 = white)} from the badge font asset."""
+    if not _font:
+        data = json.loads(FONT_FILE.read_text())
+        for ch, g in data["glyphs"].items():
+            _font[ch] = np.array([[c == "X" for c in row] for row in g["rows"]], np.float32)
+    return _font
+
+
+def render_tile(mask, scale, x0, y0, ox, oy, h, w):
+    """The tile's white at `scale` in an h x w picture, its top left at (x0 + ox, y0 + oy): copied block for block at a whole
+    scale (the game does that at 1x and Ideal 2x), smoothed at any other."""
+    if abs(scale - round(scale)) < 0.01:
+        k = int(round(scale))
+        big, out = np.kron(mask, np.ones((k, k), np.float32)), np.zeros((h, w), np.float32)
+        px, py = int(round(x0 + ox)), int(round(y0 + oy))
+        sx0, sy0 = max(0, -px), max(0, -py)
+        ex, ey = min(big.shape[1], w - px), min(big.shape[0], h - py)
+        if ex > sx0 and ey > sy0:
+            out[py + sy0:py + ey, px + sx0:px + ex] = big[sy0:ey, sx0:ex]
+        return out
+    m = np.array([[1 / scale, 0, 0.5 / scale - 0.5 - (x0 + ox) / scale],
+                  [0, 1 / scale, 0.5 / scale - 0.5 - (y0 + oy) / scale]], np.float32)
+    return cv2.warpAffine(mask, m, (w, h), flags=cv2.WARP_INVERSE_MAP | cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+
+def tile_error(mask, pic, scale, x0, ox, oy, y0=1):
+    """How far the drawn tile is from pic (white coverage 0..1), over the tile's inside, as a mean squared error."""
+    drawn = render_tile(mask, scale, x0, y0, ox, oy, *pic.shape)
+    # (only the tile's inside: the digit never comes near the edge, and what is outside the tile isn't the same everywhere)
+    c0, c1 = max(0, int(x0 + scale)), int(x0 + (TILE_W - 1) * scale)
+    r0, r1 = max(0, int(y0 + 2 * scale)), int(y0 + (BOX_H - 1) * scale)
+    return float(((drawn[r0:r1, c0:c1] - pic[r0:r1, c0:c1]) ** 2).mean())
+
+
+def best_fit(mask, pic, scale, x0, y0=1):
+    """The smallest tile_error over where the tile may sit against the box found."""
+    whole = abs(scale - round(scale)) < 0.01
+    coarse = (-2.0, -1.0, 0.0, 1.0, 2.0) if whole else COARSE
+    e, ox, oy = min((tile_error(mask, pic, scale, x0, ox, oy, y0), ox, oy) for ox in coarse for oy in coarse)
+    if whole:
+        return e
+    return min(tile_error(mask, pic, scale, x0, ox + dx, oy + dy, y0) for dx in FINE for dy in FINE)
 
 
 def find_badge(bgr, x0, cy, gh):
@@ -48,24 +95,33 @@ def find_badge(bgr, x0, cy, gh):
              if 1.2 * gh <= h <= 2.7 * gh and 0.6 * gh <= w <= 6 * gh and area >= 0.3 * w * h]
     # A box touching the edge of what was looked at is cut off (covered by the overlay or a window).
     boxes = [b for b in boxes if b[1] > 0 and b[1] + b[3] < roi.shape[0] and b[0] > 0 and b[0] + b[2] < roi.shape[1]]
-    if len(boxes) != 1:
-        return None
-    x, y, w, h = boxes[0]
     pad = max(1, round(0.35 * gh))
-    row = roi[max(0, y - pad):y + h + pad, max(0, x - int(5 * gh)):x + w + pad]
-    return row.copy(), (min(x, int(5 * gh)), min(y, pad), w, h)
+
+    def crop(x, y, w, h):
+        row = roi[max(0, y - pad):y + h + pad, max(0, x - int(7 * gh)):x + w + max(pad, int(0.7 * gh) + 1)]
+        return row.copy(), (min(x, int(7 * gh)), min(y, pad), w, h)
+
+    if len(boxes) > 1:          # (another orange icon in reach: only the one with the "LV." beside it can be the badge)
+        boxes = [b for b in boxes if has_label(*crop(*b), gh)]
+    return crop(*boxes[0]) if len(boxes) == 1 else None
 
 
-def label_span(row, box, gh):
-    """How wide the "LV" letters left of the box are, in digit heights (0 if there are none): white letters about as
-    tall as the digits. The game's measure about 2.4; other orange icons with a mark beside them 1.3-1.7."""
+def label_letters(row, box, gh):
+    """(left, right) of the white "LV" letters left of the box, in row pixels, or None: white letters about as tall as the digits."""
     bx = box[0]
     hsv = cv2.cvtColor(row[:, :max(1, bx - round(0.25 * gh))], cv2.COLOR_BGR2HSV)
     white = ((hsv[..., 1] < 100) & (hsv[..., 2] >= 170)).astype(np.uint8)
     white = cv2.morphologyEx(white, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
     _, _, stats, _ = cv2.connectedComponentsWithStats(white, connectivity=8)
     letters = [(x, w) for x, _, w, h, _ in stats[1:] if 0.9 * gh <= h <= 2.2 * gh and w <= 2.5 * gh]
-    return (max(x + w for x, w in letters) - min(x for x, _ in letters)) / gh if letters else 0.0
+    return (min(x for x, _ in letters), max(x + w for x, w in letters)) if letters else None
+
+
+def label_span(row, box, gh):
+    """How wide the "LV" letters left of the box are, in digit heights (0 if there are none). The game's measure about 2.4;
+    other orange icons with a mark beside them 1.3-1.7."""
+    got = label_letters(row, box, gh)
+    return (got[1] - got[0]) / gh if got else 0.0
 
 
 def has_label(row, box, gh):
@@ -74,68 +130,50 @@ def has_label(row, box, gh):
     return label_span(row, box, gh) >= 2.0
 
 
-def narrow_squares(row, box, count):
-    """For each of the badge's `count` digit squares: True if the digit in it is narrow, as only a 1 is in this font.
-    Blur can make a 1 read like a 4 or a 7, but not make it as wide as one."""
+def sides_clear(row, box, scale, gh, n):
+    """Is nothing covering a tile? A window or cursor over the first or last tile leaves the tiles still showing looking like a
+    shorter badge ("3" for "32"). The badge is centred, so with n tiles the first starts a known distance from the "LV"
+    letters (a covered first tile moves it 12 px, a covered last one changes n); and the panel right of the last tile is plain."""
     bx, by, w, h = box
-    out = []
-    for i in range(count):
-        x0, x1 = bx + round(i * w / count), bx + round((i + 1) * w / count)
-        square = row[by:by + h, x0:x1, 0]
-        ih, iw = max(1, round(0.12 * h)), max(1, round(0.12 * (x1 - x0)))
-        square = square[ih:-ih or None, iw:-iw or None]
-        if square.size == 0:
-            out.append(False)
-            continue
-        square = cv2.resize(square, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)     # (small badges need it)
-        _, ink = cv2.threshold(square, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        columns = np.where((ink > 0).sum(axis=0) >= max(1, 0.15 * ink.shape[0]))[0]
-        out.append(bool(len(columns)) and (columns.max() - columns.min() + 1) / ink.shape[1] < NARROW)
-    return out
+    letters = label_letters(row, box, gh)
+    if letters is None or abs((bx - letters[1]) / scale - (GAP_2 + 6 * (2 - n))) > GAP_TOL:
+        return False
+    strip = row[by:by + h, bx + w + 1:bx + w + 1 + max(2, int(round(SIDE * scale)))].astype(np.float32)
+    return strip.shape[1] >= 2 and bool((strip.max(axis=1) - strip.min(axis=1)).max() <= SIDE_FLAT)
 
 
-def _picture(digits, h, target, kind):
-    """One black-on-white picture of the digits for Tesseract: kind says how the blue channel is turned into it."""
-    if kind == "grey":
-        image = digits
-    elif kind.startswith("usm"):                        # sharpened first: blow it up, then add the difference to a blur
-        big = cv2.resize(digits, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC).astype(np.float32)
-        image = np.clip(big + 1.6 * (big - cv2.GaussianBlur(big, (0, 0), 3)), 0, 255).astype(np.uint8)
-        if kind == "usm_otsu":
-            _, image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        h = image.shape[0]
-    elif kind == "otsu":
-        _, image = cv2.threshold(digits, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    else:                                               # "t100": white where the blue channel is over 100
-        image = (digits > int(kind[1:])).astype(np.uint8) * 255
-    big = cv2.resize(image, None, fx=target / h, fy=target / h, interpolation=cv2.INTER_CUBIC)
-    return cv2.copyMakeBorder(255 - np.clip(big, 0, 255).astype(np.uint8), 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
-
-
-def _pictures(row, box, wide=False):
-    """The digit pictures for Tesseract (the first six, or the wide set), or None if the box has no inside.
-    Blue separates the white strokes from the orange: in a grey picture this font's 3/8 and 2/6 blur together."""
+def read_digits(row, box, scale, gh):
+    """The digits of the badge at one scale: (text, errors) or None when the box doesn't fit that scale. text has "?"
+    where a tile's digit isn't certain."""
     bx, by, w, h = box
-    margins = WIDE_MARGINS if wide else (0.1,)
-    out = []
-    for margin in margins:
-        m = max(1, round(h * margin))
-        digits = row[by + m:by + h - m, bx + m:bx + w - m, 0]
-        if digits.size == 0:
-            return None
-        if wide:
-            out += [_picture(digits, digits.shape[0], t, k) for k in WIDE_KINDS for t in WIDE_SIZES]
-        else:
-            out += [_picture(digits, digits.shape[0], t, "grey") for t in SIZES]
-            out += [_picture(digits, digits.shape[0], t, "t100") for t in MASK_SIZES]
-    return out
+    n = int(round((w / scale + 1) / TILE_STEP))
+    if not 1 <= n <= 3 or abs((TILE_STEP * n - 1) * scale - w) > 1.5 or abs(BOX_H * scale - h) > 1.5:
+        return None
+    blue = row[by - 1:by + h + 1, bx - 1:bx + w + 1, 0].astype(np.float32)
+    if blue.shape != (h + 2, w + 2):
+        return None
+    if not sides_clear(row, box, scale, gh, n):
+        return "?" * n, ()
+    lo, hi = float(np.percentile(blue, 10)), float(np.percentile(blue, 99.5))
+    if hi - lo < MIN_RANGE:
+        return "?" * n, ()
+    pic = np.clip((blue - lo) / (hi - lo), 0, 1)
+    text, errors = "", []
+    for i in range(n):
+        got = sorted((best_fit(mask, pic, scale, 1 + TILE_STEP * i * scale), ch) for ch, mask in font().items())
+        (e1, d), (e2, _) = got[0], got[1]
+        ok = e1 <= E_OK and e2 >= E_RATIO * e1 and e2 - e1 >= E_GAP
+        text += d if ok else "?"
+        errors.append(round(e1, 4))
+    return text, tuple(errors)
 
 
-def read_level(bgr, x0, cy, gh, tess, look=None):
-    """The level (1-250) read from the badge, or None. look (a dict) gets the badge picture, the votes and why."""
+def read_level(bgr, x0, cy, gh, scales, look=None):
+    """The level (1-250) read from the badge, or None. scales: the UI scales worth trying (ui_layout.candidate_scales).
+    look (a dict) gets the badge picture and why."""
     if look is not None:
         look.clear()
-        look.update(image=None, why="", votes={})
+        look.update(image=None, why="")
 
     def fail(why):
         if look is not None:
@@ -148,38 +186,25 @@ def read_level(bgr, x0, cy, gh, tess, look=None):
     row, box = found
     if look is not None:
         look["image"] = row
-    if tess is None:
-        return fail("Tesseract isn't available")
     if not has_label(row, box, gh):
         return fail("the LV label wasn't there")
-    pictures = _pictures(row, box)
-    if pictures is None:
-        return fail("the level badge is cut off")
-    # One orange square per digit: that many digits are expected. A shorter answer lost a digit at that size
-    # (a real frame of Lv 62 read "2" at four of the six), so it counts for nothing.
-    wanted = max(1, round(box[2] / box[3] / SQUARE_RATIO))
-    narrow = narrow_squares(row, box, wanted)
-
-    def vote(pics):
-        votes = Counter()
-        for text in tess.read_lines(pics, "0123456789"):
-            match = re.fullmatch(r"\s*([1-9][0-9]{0,2})\s*", text)
-            # (and a 1 only where the digit is narrow, a wider digit only where it isn't)
-            if (match and len(match[1]) == wanted and 1 <= int(match[1]) <= 250
-                    and all((c == "1") == n for c, n in zip(match[1], narrow))):
-                votes[int(match[1])] += 1
-        if look is not None:
-            look["votes"] = dict(votes)
-        return votes.most_common()
-
-    best = vote(pictures)
-    if best and best[0][1] >= VOTES and not any(c >= 2 for _, c in best[1:]):
-        return best[0][0]
-    # Not settled by the first six: read it many more ways, and ask for a clear winner.
-    best = vote(_pictures(row, box, wide=True))
-    if best and best[0][1] >= WIDE_VOTES and best[0][1] >= 2 * max((c for _, c in best[1:]), default=0):
-        return best[0][0]
-    return fail("the readings didn't agree on a level")
+    reads = {}
+    for scale in sorted(set(round(float(s), 4) for s in scales)):
+        got = read_digits(row, box, scale, gh)
+        if got:
+            reads[scale] = got[0]
+    if not reads:
+        return fail("the level badge doesn't fit any UI size")
+    texts = set(reads.values())
+    if len(texts) != 1:
+        return fail("the badge reads differently at different UI sizes")
+    text = texts.pop()
+    if "?" in text:
+        return fail("the badge's digits aren't clear enough")
+    level = int(text)
+    if text[0] == "0" or not 1 <= level <= 250:
+        return fail("the badge doesn't show a level")
+    return level
 
 
 # ---- telling characters apart (never by reading the name: only a small picture of it, kept in memory)

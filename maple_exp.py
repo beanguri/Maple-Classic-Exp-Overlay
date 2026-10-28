@@ -1825,7 +1825,7 @@ class ScreenReader:
         self.last_rect = None       # where the game window was at the last look (x, y, w, h)
         self.next_job_read = 0.0
         self.level = None           # the level read from the status bar's badge (two captures agreed)
-        self.level_look = None      # what the last try at reading it saw: {"image", "votes", "why"}
+        self.level_look = None      # what the last try at reading it saw: {"image", "why"}
         self.level_failures = 0     # badge reads in a row that gave nothing
         self.badge_covered = False  # the last badge look found a window over it
         self.next_level_read = 0.0
@@ -1969,7 +1969,7 @@ class ScreenReader:
         if reading.percent_only and self.mode == "region":
             # (a selected area has no game window around it: no badge to find, so typing the level in is open at once)
             self.level_failures = max(self.level_failures, LEVEL_FAILS_FOR_FALLBACK)
-            self.level_look = {"image": None, "votes": {}, "why": "Selected area: the level badge isn't in it"}
+            self.level_look = {"image": None, "why": "Selected area: the level badge isn't in it"}
         if rect and self.gh:
             name = note = None
             with self._part("map name"):
@@ -2079,7 +2079,7 @@ class ScreenReader:
 
     def _read_level(self, capture, rect):
         """Reads the level from the badge: a level counts once two looks in a row agree. A failing read
-        backs off (so a covered or unreadable badge doesn't keep starting Tesseract); a known level is
+        backs off (so a covered or unreadable badge isn't read at every look); a known level is
         looked at again only now and then."""
         capture = self.capture = as_capture(capture)
         now = time.monotonic()
@@ -2089,13 +2089,8 @@ class ScreenReader:
         ax, ay = self.exp_anchor
         g = self.gh
         x0, y0, w, h = wx + int(ax - 72 * g), wy + int(ay - 1.6 * g), int(34 * g) + 1, int(5.2 * g) + 1
-        if not tesseract_ok or TESS is None:      # nothing to wait for: typing the level in is open at once
-            self.level_failures = max(self.level_failures, LEVEL_FAILS_FOR_FALLBACK)
-            self.level_look = {"image": None, "votes": {}, "why": tesseract_note("The level badge") or "Tesseract isn't available"}
-            self.next_level_read = now + 60
-            return
         if self._blocked(x0, y0, w, h):
-            self.level_look = {"image": None, "votes": {}, "why": "this window is covering the level badge: move it"}
+            self.level_look = {"image": None, "why": "this window is covering the level badge: move it"}
             self.badge_covered = True
             self.level_failures += 1            # (a badge that stays out of sight opens the Level fallback like one that can't be read)
             self.next_level_read = now + 5
@@ -2104,8 +2099,9 @@ class ScreenReader:
         shot = capture.grab(x0, y0, w, h)
         look = {}
         try:
-            seen = level_ocr.read_level(shot[0], wx + ax - shot[1], wy + ay - shot[2], g, TESS, look) if shot else None
-        except Exception as e:              # (Tesseract failing or timing out, or anything unexpected: not a level, back off)
+            scales = [s for _, s in ui_layout.candidate_scales(rect[3])]
+            seen = level_ocr.read_level(shot[0], wx + ax - shot[1], wy + ay - shot[2], g, scales, look) if shot else None
+        except Exception as e:              # (anything unexpected: not a level, back off)
             look["why"] = f"the level read failed: {e}"
             self._part_failed("level", e)
             seen = None
