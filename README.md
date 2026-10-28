@@ -142,7 +142,7 @@ Mesos/hr is what you pick up. **Net mesos/hr** takes off what the potions you dr
 
 ## Best maps for your class
 
-**[mcwo.app](https://mcwo.app)** shows which maps give the most EXP/hr and mesos/hr for your class and level, solo or in a party, from real hours farmed by players. Click **Best maps** at the top of the overlay to open it, already filled in for you.
+**[mcwo.app](https://mcwo.app)** shows which maps give the most EXP/hr and mesos/hr for your class and level, solo or in a party, from real hours farmed by players. Click **Best maps** at the top of the overlay to open it, already filled in for you. Other apps can use the same numbers via the public [Partner API](https://mcwo.app/partners.html) (`/api/v1/…`, CORS open, credit mcwo.app).
 
 - **Enter your level and whether you're solo or in a party, then pick your class and path.** Paths are named after their 4th job, like Night Lord or Bishop, and include the jobs before it (Shadower is Bandits, Chief Bandits and Shadowers). Under Lv 30 you're still 1st job, so Path is greyed out and you see what every player of your class gets.
 - **Around your level** starts at 3 levels either way. If a map doesn't have enough players that close, it widens to 5 levels, and the row says so ("wider range"). Parties of any size count together.

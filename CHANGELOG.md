@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Partner API (best-maps site)**
+- Public JSON for third-party apps: `GET /api/v1/maps`, `/api/v1/ladder`, `/api/v1/options`, `/api/v1/recent` (CORS open, no key). Slim payloads without chart dots; every answer includes attribution for mcwo.app.
+- Docs page: [mcwo.app/partners.html](https://mcwo.app/partners.html). Existing `/api/stats` etc. unchanged for the site itself.
+
 ## 0.9.13-beta
 
 **Fewer reading problems**

@@ -1,11 +1,17 @@
 // Maple Classic Exp Overlay's shared farming stats, on Cloudflare Pages with a D1 database.
 //
-//   POST /api/runs    the overlay sends finished runs (only if the player agreed)
-//   GET  /api/stats   best maps for a class and path, level, solo or in a party
-//   GET  /api/ladder  the best maps for each band of 5 levels, for a class
-//   GET  /api/options the classes and paths, how many players each has, and totals
-//   GET  /api/recent  the latest runs shared, for the bar at the top of the site
-//   everything else   the website, from public/ (served by Cloudflare without running this)
+//   POST /api/runs       the overlay sends finished runs (only if the player agreed)
+//   GET  /api/stats      best maps for a class and path, level, solo or in a party
+//   GET  /api/ladder     the best maps for each band of 5 levels, for a class
+//   GET  /api/options    the classes and paths, how many players each has, and totals
+//   GET  /api/recent     the latest runs shared, for the bar at the top of the site
+//   GET  /api/v1/maps    partner: same as /api/stats, slim (no chart dots)
+//   GET  /api/v1/ladder  partner: same as /api/ladder
+//   GET  /api/v1/options partner: same as /api/options
+//   GET  /api/v1/recent  partner: same as /api/recent
+//   everything else      the website, from public/ (served by Cloudflare without running this)
+//
+// Partner docs: https://mcwo.app/partners.html  CORS is open (*). Credit mcwo.app.
 //
 // Anyone can send anything to a public server, so nothing is taken on trust: every run is
 // checked for being a plausible run (including no more EXP than its levels hold), each
@@ -130,11 +136,17 @@ export function jobsFor(name, path) {
   return Object.hasOwn(c.paths, path) ? [...c.first, ...c.paths[path]] : null;
 }
 
+const PARTNER_SOURCE = "https://mcwo.app";
+const PARTNER_CREDIT = "Data from Maple Classic Exp Overlay players (https://mcwo.app). Please credit mcwo.app.";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const now = clock(request, url);
     try {
+      if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+        return corsPreflight();
+      }
       if (url.pathname === "/api/health" || url.pathname === "/api/report") {
         return await handleReports(request, env, now, url, { connectionCode, connectionPart });
       }
@@ -148,6 +160,32 @@ export default {
       if (request.method === "GET" && (url.pathname === "/api/recent" || url.pathname === "/api/latest")) {
         return await cached(url, env, ctx, "latest", KEEP.latest, () => getLatest(env, now));
       }
+      // Partner API (v1): same numbers as the site, slim payloads for third-party apps.
+      if (request.method === "GET" && url.pathname === "/api/v1/maps") {
+        return await partnerFrom(getStats(url, env, ctx, now), (body) => partnerMaps(body, url));
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/ladder") {
+        return await partnerFrom(getLadder(url, env, ctx, now), partnerLadder);
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/options") {
+        return await partnerFrom(
+          cached(url, env, ctx, "options", KEEP.options, () => getOptions(env, now)), partnerOptions);
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/recent") {
+        return await partnerFrom(
+          cached(url, env, ctx, "latest", KEEP.latest, () => getLatest(env, now)), partnerRecent);
+      }
+      if (request.method === "GET" && (url.pathname === "/api/v1" || url.pathname === "/api/v1/")) {
+        return json({
+          api: "v1", source: PARTNER_SOURCE, attribution: PARTNER_CREDIT, docs: `${PARTNER_SOURCE}/partners.html`,
+          endpoints: {
+            maps: "/api/v1/maps?class=&path=&level=&party=solo|party",
+            ladder: "/api/v1/ladder?class=&path=&party=solo|party",
+            options: "/api/v1/options",
+            recent: "/api/v1/recent",
+          },
+        });
+      }
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "not found" }, ["GET", "POST"].includes(request.method) ? 404 : 405);
       }
@@ -158,6 +196,65 @@ export default {
     }
   },
 };
+
+/** Strip chart-only fields from a /api/stats map row for partners. */
+export function slimMapRow(m) {
+  if (!m || typeof m !== "object") return null;
+  return {
+    map: m.map,
+    exp_hr: m.exp_hr,
+    exp_hr_low: m.exp_hr_low,
+    exp_hr_high: m.exp_hr_high,
+    mesos_hr: m.mesos_hr ?? null,
+    pct_hr: m.pct_hr ?? null,
+    hours_per_level: m.hours_per_level ?? null,
+    players: m.players,
+    runs: m.runs,
+    hours: m.hours,
+    levels: m.levels,
+    widened: !!m.widened,
+    by_party: Array.isArray(m.by_party) ? m.by_party : [],
+  };
+}
+
+export function partnerMaps(body, url) {
+  const level = parseInt(url.searchParams.get("level"), 10);
+  return {
+    api: "v1", source: PARTNER_SOURCE, attribution: PARTNER_CREDIT,
+    class: body.class, path: body.path ?? null, level: Number.isFinite(level) ? level : null,
+    party: body.party, min_players: body.min_players, newest_run: body.newest_run ?? null,
+    maps: (body.maps || []).map(slimMapRow).filter(Boolean),
+    early: (body.early || []).map(slimMapRow).filter(Boolean),
+  };
+}
+
+export function partnerLadder(body) {
+  return {
+    api: "v1", source: PARTNER_SOURCE, attribution: PARTNER_CREDIT,
+    class: body.class, path: body.path ?? null, party: body.party,
+    band: body.band, min_players: body.min_players,
+    bands: body.bands || [],
+  };
+}
+
+export function partnerOptions(body) {
+  return { api: "v1", source: PARTNER_SOURCE, attribution: PARTNER_CREDIT, ...body };
+}
+
+export function partnerRecent(body) {
+  return { api: "v1", source: PARTNER_SOURCE, attribution: PARTNER_CREDIT, runs: body.runs || [] };
+}
+
+async function partnerFrom(upstream, shape) {
+  const res = await upstream;
+  if (res.status !== 200) return res;
+  const body = await res.json();
+  const out = json(shape(body, null), 200);
+  const cc = res.headers.get("cache-control");
+  if (cc) out.headers.set("cache-control", cc);
+  out.headers.set("x-mcwo-attribution", PARTNER_CREDIT);
+  return out;
+}
 
 // ---------------------------------------------------------------- receiving runs
 
@@ -763,6 +860,18 @@ function jsonHeaders(anySite = true) {
   const headers = { "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" };
   if (anySite) headers["access-control-allow-origin"] = "*";      // the numbers are public
   return headers;
+}
+
+function corsPreflight() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+    },
+  });
 }
 
 function json(data, status = 200, anySite = true) {

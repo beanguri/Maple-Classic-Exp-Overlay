@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Partner API · Maple Classic Exp Overlay</title>
+  <meta name="description" content="Public JSON API for real MapleStory Classic World farm rates from mcwo.app.">
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    :root { color-scheme: dark; --bg: #0e1116; --fg: #e8ecf2; --dim: #9aa3b2; --accent: #f0c14b; --card: #171b22; --line: #2a3140; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.55 system-ui, Segoe UI, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
+    h1 { font-size: 1.75rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    h2 { font-size: 1.1rem; margin: 2rem 0 0.6rem; color: var(--accent); }
+    p, li { color: var(--dim); }
+    a { color: var(--accent); }
+    code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+    code { background: var(--card); padding: 0.1em 0.35em; border-radius: 4px; color: var(--fg); }
+    pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; color: var(--fg); }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 0.8rem; color: var(--dim); }
+    ul { padding-left: 1.2rem; }
+    .foot { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <p class="pill">Public · CORS open · no key</p>
+  <h1>Partner API</h1>
+  <p>Real EXP/hr and mesos/hr from players who share 15‑minute runs with the
+    <a href="/">Maple Classic Exp Overlay</a> best‑maps site.
+    Use it from MapleBuddy, a wiki, a Discord bot, or your own tool.</p>
+
+  <h2>Base</h2>
+  <pre>https://mcwo.app/api/v1</pre>
+  <p>All <code>GET</code> responses are JSON with <code>Access-Control-Allow-Origin: *</code>.
+    No API key. Please credit <strong>mcwo.app</strong> (every payload includes an <code>attribution</code> field).</p>
+
+  <h2>Endpoints</h2>
+  <ul>
+    <li><code>GET /api/v1/maps?class=Thief&amp;path=Night%20Lord&amp;level=30&amp;party=solo</code> — ranked maps (slim)</li>
+    <li><code>GET /api/v1/ladder?class=Thief&amp;path=Night%20Lord&amp;party=solo</code> — best map per 5‑level band</li>
+    <li><code>GET /api/v1/options</code> — classes, paths, totals</li>
+    <li><code>GET /api/v1/recent</code> — latest shared runs (public bar)</li>
+    <li><code>GET /api/v1</code> — this catalog as JSON</li>
+  </ul>
+  <p><code>party</code> is <code>solo</code> or <code>party</code>. Path names match the site (4th‑job names).
+    The same data also lives under <code>/api/stats</code>, <code>/api/ladder</code>, etc. (full chart payloads).</p>
+
+  <h2>Example</h2>
+  <pre>curl "https://mcwo.app/api/v1/maps?class=Thief&amp;path=Night%20Lord&amp;level=30&amp;party=solo"</pre>
+  <pre>{
+  "api": "v1",
+  "source": "https://mcwo.app",
+  "attribution": "Data from Maple Classic Exp Overlay players …",
+  "class": "Thief",
+  "path": "Night Lord",
+  "level": 30,
+  "party": "solo",
+  "maps": [
+    { "map": "Dangerous Steam", "exp_hr": 67072, "mesos_hr": 52056, "players": 3, … }
+  ]
+}</pre>
+
+  <h2>Rules of the numbers</h2>
+  <ul>
+    <li>Only clean 15‑minute runs (opt‑in). Shop/storage/trade runs are never shared.</li>
+    <li>One player, one vote (median). Outliers dropped. A map ranks at 3+ players.</li>
+    <li>No character names, chat, screenshots, or install IDs in these answers.</li>
+  </ul>
+
+  <h2>Browser fetch</h2>
+  <pre>const r = await fetch(
+  "https://mcwo.app/api/v1/maps?class=Thief&amp;path=Night%20Lord&amp;level=30&amp;party=solo"
+);
+const data = await r.json();
+// show data.maps; keep data.attribution visible somewhere</pre>
+
+  <p class="foot">Questions or partnership ideas: open an issue on
+    <a href="https://github.com/beanguri/Maple-Classic-Exp-Overlay">GitHub</a>.
+    Site: <a href="/">mcwo.app</a>.</p>
+</main>
+</body>
+</html>
