@@ -760,10 +760,12 @@ def _v2_percent_glyph(_cache=[]):
     return _cache[0]
 
 
-def find_exp_v2(bgr, hint=None):
+def find_exp_v2(bgr, hint=None, spots=(), whole=True):
     """Locate the EXP text in a screenshot by shape and contrast, not colour. Returns a Layout
     (the same as find_exp) or None. hint is a box (x0, y0, x1, y1) where the bar was last seen: it
-    is searched first (the Layout's box and cy say where it was found, to remember for next time)."""
+    is searched first (the Layout's box and cy say where it was found, to remember for next time).
+    spots are boxes where the bar should be at each UI scale the game might use (exp_font.expected_spots):
+    tried next, cheap, before the whole picture is searched (whole=False: never search it, only those boxes)."""
     if bgr.size == 0:
         return None
     if bgr.ndim == 2 or (bgr.ndim == 3 and bgr.shape[2] == 1):      # (a grey or BGRA picture is read like a BGR one)
@@ -772,23 +774,31 @@ def find_exp_v2(bgr, hint=None):
         return None
     elif bgr.shape[2] > 3:
         bgr = bgr[:, :, :3]
-    if hint is not None:
-        H, W = bgr.shape[:2]
-        try:
-            x0, y0, x1, y1 = hint
-            x0, y0, x1, y1 = max(0, int(x0)), max(0, int(y0)), min(W, int(x1)), min(H, int(y1))
-        except (TypeError, ValueError, OverflowError):              # (a garbled remembered spot is no spot)
-            x0 = y0 = x1 = y1 = 0
-        if x1 - x0 > 8 and y1 - y0 > 8:
-            lay = _find_exp_v2(bgr[y0:y1, x0:x1], W)
-            if lay:
-                V = np.zeros(bgr.shape[:2], np.float32)         # only the searched box is filled in: all the digits need
-                V[y0:y1, x0:x1] = lay.V
-                sh = lambda cells: [(c[0] + x0, c[1], c[2]) for c in cells]
-                b = lay.box
-                return Layout(lay.gh, lay.cy + y0, sh(lay.exp), sh(lay.pct),
-                              (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0), V)
-    return _find_exp_v2(bgr)
+    for box in ([hint] if hint is not None else []) + list(spots or ()):
+        lay = _find_exp_v2_in(bgr, box)
+        if lay:
+            return lay
+    return _find_exp_v2(bgr) if whole else None
+
+
+def _find_exp_v2_in(bgr, box):
+    """The Layout found inside one box of the picture (in the whole picture's coordinates), or None."""
+    H, W = bgr.shape[:2]
+    try:
+        x0, y0, x1, y1 = box
+        x0, y0, x1, y1 = max(0, int(x0)), max(0, int(y0)), min(W, int(x1)), min(H, int(y1))
+    except (TypeError, ValueError, OverflowError):              # (a garbled remembered spot is no spot)
+        return None
+    if x1 - x0 <= 8 or y1 - y0 <= 8:
+        return None
+    lay = _find_exp_v2(bgr[y0:y1, x0:x1], W)
+    if not lay:
+        return None
+    V = np.zeros(bgr.shape[:2], np.float32)         # only the searched box is filled in: all the digits need
+    V[y0:y1, x0:x1] = lay.V
+    sh = lambda cells: [(c[0] + x0, c[1], c[2]) for c in cells]
+    b = lay.box
+    return Layout(lay.gh, lay.cy + y0, sh(lay.exp), sh(lay.pct), (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0), V)
 
 
 def _v2_bracket_candidates(mask, V8, have):
@@ -2286,8 +2296,9 @@ class ScreenReader:
 
         old = reading.candidates[0] if reading.confident and reading.candidates else None
         small = own or img.shape[0] < wh - top or img.shape[1] < ww       # (a picture that already is the strip needs no other)
+        spots = [(a - ox, b - oy, c - ox, d - oy) for a, b, c, d in exp_font.expected_spots(ww, wh)]
         res = self.shadow.look(img, old, (time.perf_counter() - started) * 1000, lay, hint, strip if small else None, old_img, own,
-                                searching=lay is None, recheck=self._today_answer)
+                                searching=lay is None, recheck=self._today_answer, spots=spots)
         ox, oy = where["ox"], where["oy"]
         if res is None:
             return reading

@@ -1182,8 +1182,16 @@ check("the sample text is 80 x 7 px at 1x, with its two brackets", pic.shape == 
 big = exp_font.render("12,345 [67.89%]", 2.0)
 check("...and 160 x 14 at 2x, smoothed (grey between black and white)", big.shape == (14, 160) and 0.1 < big.mean() < 0.5
       and ((big > 0.05) & (big < 0.95)).any())
-check("the window scale is height / 768 (1 with UI Size Ideal)", exp_font.window_scale(1440) == 1.875
-      and exp_font.window_scale(1440, ideal=True) == 1.0)
+check("the window scale is height / 768 (never below 1); UI Size Ideal takes ui_layout's whole steps (1x, 2x from 1440)",
+      exp_font.window_scale(1440) == 1.875 and exp_font.window_scale(1080, ideal=True) == 1.0
+      and exp_font.window_scale(1440, ideal=True) == 2.0 and exp_font.window_scale(600) == 1.0)
+spots = exp_font.expected_spots(2560, 1440)
+fx, fy = exp_font.text_origin(2560, 1440)
+fx1, fy1 = exp_font.text_origin(2560, 1440, ideal=True)
+check("expected spots: one box per candidate UI scale (Default 1.875x, Ideal 2x, Ideal 1x), each around its first digit",
+      len(spots) == 3 and spots[0][0] < fx < spots[0][2] and spots[0][1] < fy < spots[0][3]
+      and spots[1][0] < fx1 < spots[1][2] and spots[1][1] < fy1 < spots[1][3]
+      and spots[2][0] < 1280 + (577.95 - 512) < spots[2][2] and spots[2][3] <= 1440 + 1)
 ox, oy = exp_font.text_origin(2560, 1440)
 check("the first digit of the bar lands where it was measured at 1440p (about 1403.7, 1387.5)",
       abs(ox - 1403.65) < 0.3 and abs(oy - 1387.5) < 0.3)
@@ -1389,6 +1397,21 @@ try:
     check("shadow: with no bar on today's side v2 searches at most every 10 s, the looks between aren't counted",
           8 <= len(searches) <= 10 and len(ran) == len(searches) and all(r.category == "neither" for r in ran)
           and sum(unit.counts[k] for k in shadow_mod.CATEGORIES) == len(ran))
+    # ticket 12: between whole searches, the cheap boxes where the bar should be are still tried on every look
+    unit = shadow_unit(GOOD, finds=True)
+    unit.fits = lambda e, p: True
+    calls = []
+
+    def boxes_find(img, hint, spots=(), whole=True):
+        calls.append(whole)
+        return None if not whole else LAY
+    unit.find = boxes_find
+    clock[0] += 100
+    first = unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)])
+    second = unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)])
+    check("shadow: a look between whole searches tries only the boxes (nothing there = not a look, no count)",
+          first is not None and second is None and calls[-1] is False and unit.counts["neither"] + unit.counts["old_only"] + unit.counts["v2_only"] == 1)
+    check("shadow: ...and the EXP no-bar interval is the one measured (15 s)", shadow_mod.NOBAR_BY_PART["exp"] == 15)
     check("shadow: ...and those slow searches never turn v2 off (the guard compares looks where both had the bar)",
           not unit.stopped and not unit.thinned and len(unit.times) == 0)
     unit = shadow_unit(GOOD)
@@ -1826,6 +1849,27 @@ for (w_, h_, ideal) in ((2560, 1440, False), (2560, 1600, False), (2732, 1536, F
     strip = win[int(h_ * (1 - m.SEARCH_STRIP)):]
     check(f"synthetic {w_}x{h_}, UI {'Ideal' if ideal else 'Default'}: the bar is found in the bottom strip and read",
           read_v2(strip) == (68601, 71.68))
+
+# ticket 12: the expected spots (every candidate UI scale) find the bar fast; Ideal 1x at 1440p is Send report #5's case
+for (w_, h_, ideal, step) in ((2560, 1440, True, 2.0), (3840, 2160, True, 2.0), (2560, 1440, False, None)):
+    win = box_window(w_, h_, "68,601 [71.68%]", ideal)
+    top = int(h_ * (1 - m.SEARCH_STRIP))
+    strip = win[top:]
+    sp = [(a_, b_ - top, c_, d_ - top) for a_, b_, c_, d_ in exp_font.expected_spots(w_, h_)]
+    lay = m.find_exp_v2(strip, None, sp, whole=False)
+    check(f"expected spots alone find the bar, {w_}x{h_} Ideal={ideal}", lay is not None and read_v2(strip) == (68601, 71.68)
+          and digits_v2.read_layout_v2(exp_font.load(), lay) == (68601, 71.68))
+    check(f"...and no bar in a blank picture is None with whole=False (no whole-picture search), {w_}x{h_}",
+          m.find_exp_v2(np.full(strip.shape, 74, np.uint8), None, sp, whole=False) is None)
+# report #5: 1440p, UI Ideal at 1x (the rule says 2x; the other step is still tried)
+win = box_window(2560, 1080, "68,601 [71.68%]", True)           # (a 1080-tall window draws Ideal at 1x: same layout, same text)
+img1 = np.full((1440, 2560, 3), 74, np.uint8)
+img1[1440 - 1080:] = win
+strip = img1[int(1440 * (1 - m.SEARCH_STRIP)):]
+sp = [(a_, b_ - int(1440 * (1 - m.SEARCH_STRIP)), c_, d_ - int(1440 * (1 - m.SEARCH_STRIP))) for a_, b_, c_, d_ in exp_font.expected_spots(2560, 1440)]
+lay = m.find_exp_v2(strip, None, sp, whole=False)
+check("report #5's case (1440p window, Ideal drawn at 1x) is found by the 1x spot and read",
+      lay is not None and digits_v2.read_layout_v2(exp_font.load(), lay) == (68601, 71.68))
 
 import ui_layout  # noqa: E402
 

@@ -11,8 +11,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import ui_layout
+
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "exp_font.json"
 DESIGN_W, DESIGN_H = 1024, 768          # the game lays its UI out on this area, then scales it to the window
+SPOT_LEFT, SPOT_RIGHT, SPOT_UP, SPOT_DOWN = 70, 150, 6, 14     # design px around the first digit that hold the whole line
 _cache = {}
 
 
@@ -25,17 +28,28 @@ def load(path=FONT_PATH):
 
 
 def window_scale(window_h, ideal=False):
-    """How many screen pixels one design pixel is: the window height over 768 (1.0 at 1024x768).
-    With UI Size "Ideal" the UI stays at 1x whatever the window size."""
-    return 1.0 if ideal else window_h / DESIGN_H
+    """How many screen pixels one design pixel is: the window height over 768 (never below 1x). With UI Size
+    "Ideal" it grows in whole steps instead (ui_layout holds that rule)."""
+    return float(ui_layout.ideal_step(window_h)) if ideal else ui_layout.default_scale(window_h)
 
 
 def text_origin(window_w, window_h, ideal=False, font=None):
     """Screen position of the first digit's top-left corner. The design area is centred left to right and
     sits on the bottom edge of the window (it fills the window when the UI scales with it)."""
     o = (font or load())["scale"]["origin"]
-    s = window_scale(window_h, ideal)
-    return window_w / 2 + (o["x"] - DESIGN_W / 2) * s, window_h - (DESIGN_H - o["y"]) * s
+    return ui_layout.design_to_window(o["x"], o["y"], window_w, window_h, window_scale(window_h, ideal))
+
+
+def expected_spots(window_w, window_h, font=None):
+    """Where the EXP line should be in a window of this size, one box (x0, y0, x1, y1) for each UI scale the game
+    might be drawing at (ui_layout.candidate_scales, most likely first). Boxes are generous: the first digit moves
+    with the number's length. Used as hints, so a search starts there instead of over the whole strip."""
+    o = (font or load())["scale"]["origin"]
+    boxes = []
+    for _, s in ui_layout.candidate_scales(window_h):
+        x, y = ui_layout.design_to_window(o["x"], o["y"], window_w, window_h, s)
+        boxes.append((int(x - SPOT_LEFT * s), int(y - SPOT_UP * s), int(x + SPOT_RIGHT * s), int(y + SPOT_DOWN * s)))
+    return boxes
 
 
 def glyph_positions(text, font=None):
