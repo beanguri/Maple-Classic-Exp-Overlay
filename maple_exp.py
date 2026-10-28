@@ -54,6 +54,7 @@ import digits_v2
 import exp_font
 import healthlog
 import level_ocr
+import mesos_v2
 import ocr
 import potions
 import report
@@ -1807,6 +1808,9 @@ class ScreenReader:
         self.mesos_covered = False  # this app's window is in the way of the mesos
         self.capture = ScreenCapture(None)  # where the pictures come from (set at each look)
         self.two_boxes = False      # a storage / trade window shows a second mesos box
+        self.mesos_v2_last = None   # where reader v2 read the mesos box last time (its hint), in the box picture
+        self.mesos_kept = deque(maxlen=shadow.KEEP)     # pictures of the box where v2 and today's reader differed (memory only)
+        self.mesos_grab_ms = 0.0    # what the last box picture's grab took (not part of the reading)
         self.window = None          # "shop", "storage" or "trade" while one is open (or just closed)
         self.window_until = 0.0     # ...and until when it still counts
         self.window_box = False     # the mesos box being read belongs to such a window (not the inventory)
@@ -2399,6 +2403,10 @@ class ScreenReader:
                             if not window:                          # a window's own box isn't remembered
                                 moved = (ww, wh) + box
                         self.window_box = bool(window)
+                    if window == "trade" or self.two_boxes:
+                        self._v2_mesos_skipped()                    # (whose box it is can't be told: v2 doesn't guess either)
+                    elif field is None:                             # today's reader found no box: v2 looks on its own
+                        self.shadow_part("mesos", None, 0.0, lambda: self._v2_mesos(img, wh), searching=True)
                     area = self.party_area
                     if area and self._blocked(*area):
                         notes.append("This window is covering the party list.")
@@ -2423,9 +2431,15 @@ class ScreenReader:
                 self.mesos_covered = True
             else:
                 with self._part("mesos"):
+                    t0 = time.perf_counter()
                     mesos, image, boxes = self._read_mesos(capture, wx + bx, wy + by, bw, bh)
+                    old_ms = (time.perf_counter() - t0) * 1000 - self.mesos_grab_ms
                     self._part_ok("mesos")
                     self._tried("mesos", mesos is not None)
+                if image is not None and self.window != "trade" and not self.two_boxes:      # (v2 reads the picture today's reader just read)
+                    res = self.shadow_part("mesos", mesos, old_ms, lambda: self._v2_mesos(image, wh, keep=True))
+                    if res is not None and res.category in ("disagree", "old_only", "v2_only"):
+                        self.mesos_kept.append({"kind": res.category, "old": mesos, "v2": res.answer, "image": image, "boxes": []})
         window = self.window if now <= self.window_until else None
         if window:
             notes.append(f"{WINDOW_NAMES[window]} window open.")
@@ -2493,7 +2507,9 @@ class ScreenReader:
     def _read_mesos(self, capture, x, y, w, h):
         """Reads the mesos box at (x, y, w, h) on screen. Returns (number, image, boxes)."""
         capture = self.capture = as_capture(capture)
+        t0 = time.perf_counter()
         shot = capture.grab(x - 2 * h, y - h, w + 4 * h, 3 * h)
+        self.mesos_grab_ms = (time.perf_counter() - t0) * 1000
         if not shot:
             return None, None, ()
         img, sx, sy = shot
@@ -2547,6 +2563,24 @@ class ScreenReader:
         if checked == value or votes == 6:            # two readers agree: learn these digits
             learned.learn(lay, checked)
         return checked, img, boxes
+
+    def _v2_mesos(self, img, window_h, keep=False):
+        """Reader v2's mesos for a picture today's reader already has (the whole window at a scan, or the small
+        picture round the box): (value or None, why). keep: it is the box's own picture, so the spot it read at is
+        remembered and tried first next time."""
+        pairs = ui_layout.candidate_scales(window_h)
+        known = ui_layout.mode_from_gh(self.gh, window_h)       # (which UI size the EXP bar's digits say, if they do)
+        scales = ([known[1]] if known else []) + [sc for _, sc in pairs if not known or abs(sc - known[1]) > 0.01 * sc]
+        look, found = mesos_v2.read_mesos_v2(img, scales, self.mesos_v2_last if keep else None)
+        if keep:
+            self.mesos_v2_last = found
+        return look.value, look.why
+
+    def _v2_mesos_skipped(self):
+        """A look v2 doesn't take: the player's own box can't be told from another one."""
+        each = self.shadows["mesos"]
+        if not each.idle():
+            each.counts["skipped"] += 1
 
     def _read_info(self, capture, rect):
         """Returns (map name if it was just read, note)."""
@@ -6364,6 +6398,9 @@ class App:
         if mr:
             read = fmt_num(mr.mesos) if mr.mesos is not None else "nothing (waiting for a clear look)"
             shots.append((mr.mesos_image, mr.mesos_boxes, f"Mesos. Read: {read}"))
+        for kept in list(self.reader.mesos_kept):
+            shots.append((kept["image"], kept["boxes"], f"Reader v2 test, mesos ({kept['kind']}). Old: {report.part_answer_text(kept['old'])}"
+                                                        f"   v2: {report.part_answer_text(kept['v2'])}"))
         for kept in list(self.reader.shadow.kept):
             shots.append((kept["image"], kept["boxes"], f"Reader v2 test ({kept['kind']}). Old: {report.answer_text(kept['old'])}"
                                                         f"   v2: {report.answer_text(kept['v2'])}"))

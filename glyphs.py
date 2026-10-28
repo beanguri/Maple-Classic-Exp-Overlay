@@ -11,7 +11,8 @@ How a part builds on this (potion counts are the first, see read_count at the bo
         "glyphs": {"7": {"rows": ["XXXXXX", ".....X", ...], "adv": 8}, ...},
         "styles": {"keyboard": {"origin": [dx, dy]}, ...}}
      A glyph is a bitmap of its fill pixels ("X"), the same number of rows for every glyph, each row drawn in
-     its own colour. The outline is every pixel next to the fill (rule "cross": left, right, above, below).
+     its own colour. The outline is every pixel next to the fill (rule "cross": left, right, above, below; rule "none": no outline,
+     as in the mesos digits).
      A glyph's cell starts one pixel left of and one above its fill; "adv" is how far the next cell starts.
      Colours are BGR, as the screen is read. "styles" says where the text sits in a part's box, in game pixels.
   2. Font.load(name). render() draws a text at a scale and a sub-pixel position: alpha plus colour.
@@ -96,7 +97,7 @@ class Font:
                 fill[1:1 + self.rows, p + 1:p + 1 + g.shape[1]] |= g
             kernel = (np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8) if self.rule == "cross"
                       else np.ones((3, 3), np.uint8))
-            ring = cv2.dilate(fill, kernel) & (1 - fill)
+            ring = np.zeros_like(fill) if self.rule == "none" else cv2.dilate(fill, kernel) & (1 - fill)
             colour = ring[:, :, None] * self.outline
             colour[1:1 + self.rows] += fill[1:1 + self.rows, :, None] * self.fill[:, None, :]
             got = self._layers[text] = ((fill | ring).astype(np.float32), colour.astype(np.float32))

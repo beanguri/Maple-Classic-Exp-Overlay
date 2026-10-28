@@ -226,5 +226,62 @@ check("the count font has the ten digits, 9 rows each, and only 1 is narrower th
 check("the count font says where the text sits in both slot styles", set(COUNT_FONT.styles) == {"keyboard", "controller"})
 
 
+# ---- reader v2 for the mesos box (ticket 13): a box drawn from the mesos font, found by its frame, read at any size
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+import glyphs  # noqa: E402
+import mesos_v2  # noqa: E402
+
+
+def game_box(value, bg=255, noise=0, x0=40, y0=30, frame=True, coin=True, covered=0, seed=1):
+    """A mesos box on the game's own pixels (300 x 80, BGR): frame, coin, scenery or white inside, the number right aligned."""
+    rng = np.random.RandomState(seed)
+    img = np.full((80, 300, 3), 150, np.uint8)
+    if noise:
+        img[:] = np.clip(150 + rng.randint(-noise, noise + 1, (80, 300, 1)), 0, 255)
+    img[y0 + 1:y0 + 15, x0 + 1:x0 + 144] = bg if not noise else np.clip(bg + rng.randint(-noise, noise + 1, (14, 143, 1)), 0, 255)
+    if frame:
+        img[y0, x0:x0 + 145] = img[y0 + 15, x0:x0 + 145] = 83
+        img[y0:y0 + 16, x0] = img[y0:y0 + 16, x0 + 144] = 83
+    if coin:
+        cv2.circle(img, (x0 - 9, y0 + 7), 5, (30, 170, 220), -1)
+    font = glyphs.Font.load("mesos")
+    right = x0 + 144 - 4                                   # the last digit's right column
+    for ch in reversed(f"{value:,}"):
+        bits = font.glyphs[ch]
+        for r in range(bits.shape[0]):
+            for c in range(bits.shape[1]):
+                if bits[r, c]:
+                    img[y0 + 4 + r, right - 4 + c] = 0
+        right -= 4 if ch == "," else 6
+    if covered:
+        img[y0:y0 + 16, x0:x0 + covered] = 200
+    return img
+
+
+def on_screen(img, scale):
+    """The game picture the way the game scales it: copied block for block at a whole step, smoothed otherwise."""
+    return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST if abs(scale - round(scale)) < 0.01 else cv2.INTER_LINEAR)
+
+
+for sc in (1.0, 1.40625, 1.875, 2.0, 3.0):
+    for v in (0, 7, 1234, 24697, 9999999, 123456789):
+        look, _ = mesos_v2.read_mesos_v2(on_screen(game_box(v), sc), [sc])
+        check(f"mesos v2: {v:,} read at {sc}x", look.value == v and look.why == "ok")
+    look, _ = mesos_v2.read_mesos_v2(on_screen(game_box(21890, bg=170, noise=12), sc), [sc])
+    check(f"mesos v2: the see-through box over scenery reads or says nothing at {sc}x", look.value in (None, 21890))
+    check(f"mesos v2: a number whose start a window covers is never a shorter number at {sc}x",
+          mesos_v2.read_mesos_v2(on_screen(game_box(24697, covered=110), sc), [sc])[0].value is None)
+    check(f"mesos v2: a frame without the coin isn't the mesos box at {sc}x", mesos_v2.read_mesos_v2(on_screen(game_box(24697, coin=False), sc), [sc])[0].why == "not_found")
+look, found = mesos_v2.read_mesos_v2(on_screen(game_box(1234), 1.0), [2.0, 1.0])
+check("mesos v2: tries every scale it is given", look.value == 1234)
+look2, _ = mesos_v2.read_mesos_v2(on_screen(game_box(1234), 1.0), [2.0, 1.0], found)
+check("mesos v2: a spot that read once is checked first and gives the same answer", look2.value == 1234)
+pair = np.concatenate([game_box(1234), game_box(5678)], axis=0)
+look, _ = mesos_v2.read_mesos_v2(pair, [1.0])
+check("mesos v2: two boxes = the player's can't be told: no value", look.value is None and look.why == "unclear" and len(look.boxes) == 2)
+check("mesos v2: nothing on the picture is not_found", mesos_v2.read_mesos_v2(np.full((200, 300, 3), 128, np.uint8), [1.0])[0].why == "not_found")
+check("mesos v2: the font has the ten digits and the comma", sorted(glyphs.Font.load("mesos").chars) == sorted("0123456789,"))
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
