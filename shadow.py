@@ -24,6 +24,8 @@ GUARD_MIN = 20              # ...once it has at least this many
 # The CPU guard (measured in T16: the EXP shadow costs 0.1-0.2 of today's EXP read and runs every look; the mesos shadow, when it
 # can't read the box cheaply, 1-6 times today's mesos read, which is still well inside 2x the whole overlay):
 THIN_RATIO, OFF_RATIO = 1.0, 8.0     # v2 costs more than today's reader: every other look; more than 8 times: off for the session
+LOOK_CAP = 10              # one look counts for the guard as at most this many times today's reader (a stall, antivirus or
+                           # a sleeping PC inside a single look is not v2 being slow: it must not turn v2 off for the session)
 ERROR_PAUSE = 60            # seconds v2 is skipped after it raised
 STRIP_SECONDS = 10          # v2 may grab the bottom strip itself this often at most
 NOBAR_SECONDS = 10          # ...and search for a bar today's reader doesn't see this often at most
@@ -86,7 +88,7 @@ class _Guarded:
         if len(self.times) < GUARD_MIN:
             return 0.0
         old = sum(t[0] for t in self.times)
-        return sum(t[1] for t in self.times) / max(old, 1e-6)
+        return sum(min(t[1], LOOK_CAP * max(t[0], 1.0)) for t in self.times) / max(old, 1e-6)
 
     def _allowed(self):
         """Should v2 run at this look? (A look it skips for the CPU is counted as skipped.)"""

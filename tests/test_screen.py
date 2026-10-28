@@ -2103,6 +2103,17 @@ try:
     for _ in range(shadow_mod.GUARD_MIN + 10):
         cheap.look(1500, 10.0, run2)
     check("part shadow CPU guard: each part has its own (one stopping leaves the other running)", not cheap.stopped and not cheap.thinned)
+    tick = [0.0]
+    stalled = shadow_mod.PartShadow("mesos", lambda exc: None, timer=lambda: tick[0])
+    def v2_takes(ms):
+        def go():
+            tick[0] += ms / 1000
+            return 1500, "ok"
+        return go
+    for i in range(40):                          # (v2 costs 0.4 of today's reader, and once the PC stalls for 10 s in the middle of a look)
+        stalled.look(1500, 20.0, v2_takes(8 + (10000 if i == 25 else 0)))
+    check("part shadow CPU guard: one 10 s stall inside a single look doesn't turn v2 off or thin it for the session",
+          not stalled.stopped and not stalled.thinned and stalled.counts["skipped"] == 0)
 
     mesos, run = part_unit(1500, name="mesos")
     party, run2 = part_unit(2, name="party", nobar_seconds=30)
