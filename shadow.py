@@ -3,7 +3,7 @@ reader and only notes whether the two agree. It never changes a Reading, the tra
 
 The reader hands in the picture it just read, its own answer and how long it took; this keeps the counts,
 the last few disagreements (with their pictures, in memory only) and guards the CPU: if v2 costs more than
-half of today's reader it runs every other look, more than all of it and it is off for the session. Where today's
+all of today's reader it runs every other look, more than 8 times that and it is off for the session. Where today's
 reader finds no bar (a menu, the login screen) v2's whole-strip search costs many times more, so there it searches
 only every NOBAR_SECONDS and the guard leaves those looks out (it compares looks where both had the bar).
 
@@ -21,7 +21,9 @@ WHY = ("ok", "not_found", "unclear")    # why v2 answered what it did: read it /
 WHY_COUNTED = ("not_found", "unclear")  # an old_only look is counted by these (the health report's shadow_why)
 GUARD_LOOKS = 100           # the CPU guard compares the last this many looks...
 GUARD_MIN = 20              # ...once it has at least this many
-THIN_RATIO, OFF_RATIO = 0.5, 1.0
+# The CPU guard (measured in T16: the EXP shadow costs 0.1-0.2 of today's EXP read and runs every look; the mesos shadow, when it
+# can't read the box cheaply, 1-6 times today's mesos read, which is still well inside 2x the whole overlay):
+THIN_RATIO, OFF_RATIO = 1.0, 8.0     # v2 costs more than today's reader: every other look; more than 8 times: off for the session
 ERROR_PAUSE = 60            # seconds v2 is skipped after it raised
 STRIP_SECONDS = 10          # v2 may grab the bottom strip itself this often at most
 NOBAR_SECONDS = 10          # ...and search for a bar today's reader doesn't see this often at most
