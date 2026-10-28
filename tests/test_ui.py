@@ -964,13 +964,12 @@ check(f"A13-2: a level over the table is said as it is, not as trouble reading (
 app.reset()
 app.reader.level, app.reader.level_failures, app.reader.next_level_read = None, 0, 0.0
 app.reader.exp_anchor, app.reader.gh = (100, 100), 11
-real_tess, real_tess_ok, real_blocked = m.TESS, m.tesseract_ok, app.reader._blocked
-m.TESS, m.tesseract_ok = object(), True
+real_blocked = app.reader._blocked
 app.reader._blocked = lambda *a: True
 for _ in range(m.LEVEL_FAILS_FOR_FALLBACK):
     app.reader.next_level_read = 0.0
     app.reader._read_level(None, (0, 0, 1000, 800))
-m.TESS, m.tesseract_ok, app.reader._blocked = real_tess, real_tess_ok, real_blocked
+app.reader._blocked = real_blocked
 app._handle(pct._replace(level=None))
 check(f"A13-4: a covered badge ends in the Level fallback, and the status says the window is in the way "
       f"({app.reader.level_failures}, {app.status.get()!r})",

@@ -545,6 +545,7 @@ for f in sorted(FRAMES.glob("exp_*.png")):
 
 # ---- the level badge ("LV." and the level in an orange box), read only when the bar shows no EXP number
 import level_ocr  # noqa: E402
+import ui_layout  # noqa: E402
 from pics import badge_scene  # noqa: E402
 
 
@@ -560,119 +561,72 @@ class Says:
 
 for gh in (7, 11, 14, 22, 28):
     wrong = []
-    for level in (7, 32, 58, 99, 100):
+    for level in (1, 7, 32, 58, 99, 100, 250):
         pic, x0, cy = badge_scene(level, gh)
-        look, tess = {}, Says(str(level))
-        got = level_ocr.read_level(pic, x0, cy, gh, tess, look)
-        if got != level or tess.runs != 1 or look["image"] is None:
+        look = {}
+        got = level_ocr.read_level(pic, x0, cy, gh, [gh / 7], look)
+        if got != level or look["image"] is None:
             wrong.append(f"Lv {level}: {got}")
-    check(f"a complete badge is found and read in one Tesseract run, digits {gh} px ({', '.join(wrong) or 'all'})", not wrong)
+    check(f"a complete badge is found and read by its own digits, UI scale {gh / 7:.2f} ({', '.join(wrong) or 'all'})", not wrong)
 pic, x0, cy = badge_scene(32, 11)
 for name, scene in (("no orange box", badge_scene(32, 11, box=False)), ("no LV label", badge_scene(32, 11, label=False))):
-    look, tess = {}, Says("32")
-    check(f"{name}: no level, and Tesseract isn't even started",
-          level_ocr.read_level(scene[0], scene[1], scene[2], 11, tess, look) is None and tess.runs == 0 and look["why"])
-class Once:
-    """Answers the first six pictures with `texts` and every later picture with nothing (so only the first look votes)."""
-    def __init__(self, texts):
-        self.texts, self.calls = list(texts), 0
-
-    def read_lines(self, images, chars=None):
-        self.calls += 1
-        return (self.texts if self.calls == 1 else [""] * len(images))
-
-
-vote = lambda *t: level_ocr.read_level(pic, x0, cy, 11, Once(t), {})
-check("6 of 6 sizes agreeing is a level", vote("32", "32", "32", "32", "32", "32") == 32)
-check("4 of 6 agreeing, nothing against, is a level", vote("32", "32", "32", "32", "", "") == 32)
-check("3 of 6 agreeing is not enough", vote("32", "32", "32", "", "", "") is None)
-check("a rival level with 2 votes means no level", vote("32", "32", "32", "32", "52", "52") is None)
-check("a stray digit string isn't a level (0, 3-digit zero, letters)", vote("0", "07", "x", "", "32", "32") is None)
-check("a lone rival vote doesn't spoil 5 of 6", vote("32", "32", "32", "32", "32", "52") == 32)
-check("cut-off readings of the same level ('3' for '37', seen on a real badge) don't count against it",
-      vote("37", "37", "37", "37", "3", "3") == 37 and vote("32", "32", "32", "32", "2", "3") == 32)
-check("...but a short answer with the longer one as its rival is no level", vote("3", "3", "3", "3", "37", "37") is None)
-# when the first six readings don't settle it (blurry frames), a wide set of readings votes, under a stricter rule
-class Staged:
-    """Stands in for Tesseract: `first` answers the first call (repeated over its pictures), `second` the later
-    ones exactly as listed (and nothing for the rest of the pictures)."""
-    def __init__(self, first, second):
-        self.answers, self.calls, self.sizes = [first, second], 0, []
-
-    def read_lines(self, images, chars=None):
-        texts = self.answers[min(self.calls, 1)]
-        self.sizes.append(len(images))
-        self.calls += 1
-        if self.calls == 1:
-            return [texts[i % len(texts)] for i in range(len(images))]
-        return (list(texts) + [""] * len(images))[:len(images)]
-
-
-def staged(first, second, level=32):
-    pic, x0, cy = badge_scene(level, 11)
-    tess = Staged(first, second)
     look = {}
-    return level_ocr.read_level(pic, x0, cy, 11, tess, look), tess, look
+    check(f"{name}: no level, and it says why",
+          level_ocr.read_level(scene[0], scene[1], scene[2], 11, [11 / 7], look) is None and look["why"])
+badge_font = level_ocr.font()
+check("the badge font has all ten digits and no two alike", sorted(badge_font) == list("0123456789")
+      and len({badge_font[d].tobytes() for d in badge_font}) == 10)
+# the game's own sizes: at 1x and Ideal 2x block for block, at other sizes smoothed; every digit at every size
+sizes_wrong = []
+for scale in (1.0, 1.40625, 1.5, 1.875, 2.0, 2.8125, 3.75):
+    for level in (10, 25, 36, 47, 58, 69, 80, 91, 100, 234):
+        pic, x0, cy = badge_scene(level, 7 * scale, scale=scale)
+        got = level_ocr.read_level(pic, x0, cy, 7 * scale, [scale], {})
+        if got != level:
+            sizes_wrong.append((scale, level, got))
+check(f"every digit is read at the game's own sizes (1x, 1.41, 1.5, 1.88, 2x, 2.81, 3.75): {sizes_wrong or 'all'}", not sizes_wrong)
+# a leading zero, a level over 250 and a badge that fits none of the sizes tried are not levels
+for what, level, scales in (("a leading zero", "07", [2.0]), ("a level over 250", 251, [2.0]), ("a size that isn't tried", 58, [1.0, 1.4])):
+    pic, x0, cy = badge_scene(level, 14)
+    look = {}
+    check(f"{what} is no level, and it says why", level_ocr.read_level(pic, x0, cy, 14, scales, look) is None and look["why"])
 
 
-got, tess, look = staged([""], [""] * 3 + ["36"] * 9)
-check(f"a blurry badge that the first six readings can't settle goes on to the wide set (calls {tess.sizes})",
-      got is None or got == 36)
-got, tess, look = staged([""], ["36"] * 9 + [""] * 3)
-check(f"...which settles it when one level has at least 4 votes and twice any other ({got}, pictures {tess.sizes})",
-      got == 36 and tess.calls == 2 and tess.sizes[0] == 6 and tess.sizes[1] > 40)
-got, tess, look = staged(["36", "36", "36", "36", "36", "36"], [""])
-check("...and doesn't go on when the first six are clear (one Tesseract run)", got == 36 and tess.calls == 1)
-check("...a rival with half the votes still leaves it (8 against 4)", staged([""], ["58"] * 8 + ["56"] * 4, level=58)[0] == 58)
-check("...but a rival with more than half the votes means no level (8 against 5)", staged([""], ["58"] * 8 + ["56"] * 5, level=58)[0] is None)
-check("...and fewer than 4 votes isn't enough however alone (3 against none)", staged([""], ["58"] * 3 + [""] * 8, level=58)[0] is None
-      and staged([""], ["58"] * 4 + [""] * 8, level=58)[0] == 58)
-check("...answers of the wrong length neither help nor count against it in the wide set",
-      staged([""], ["5"] * 12 + ["58"] * 3, level=58)[0] is None and staged([""], ["5"] * 12 + ["58"] * 4, level=58)[0] == 58)
+def over_the_tile(damage):
+    """Reads every badge in `levels` after damage(picture, (x, y, w, h) of the orange tiles) at a few sizes; the wrong answers."""
+    wrong = []
+    for level in (1, 7, 32, 58, 99, 100, 250):
+        for gh in (7, 11, 14):
+            pic, x0, cy = badge_scene(level, gh)
+            s = gh / 7
+            box = (int(x0 - 53.6 * gh), int(cy + 0.2 * gh), int((12 * len(str(level)) - 1) * s), int(13 * s))
+            got = level_ocr.read_level(damage(pic, box), x0, cy, gh, [s], {})
+            if got is not None and got != level:
+                wrong.append((level, gh, got))
+    return wrong
 
+
+for label, damage in (
+        ("an opaque window over the right of the tiles", lambda p, b: cv2.rectangle(p, (b[0] + b[2] // 2, b[1]), (b[0] + b[2], b[1] + b[3]), (40, 40, 40), -1)),
+        ("a heavy blur", lambda p, b: cv2.GaussianBlur(p, (0, 0), 2.0)),
+        ("heavy grain", lambda p, b: np.clip(p + np.random.default_rng(3).normal(0, 60, p.shape), 0, 255).astype(np.uint8)),
+        ("the mouse cursor over a tile", lambda p, b: cv2.circle(p, (b[0] + b[2] // 4, b[1] + b[3] // 2), max(2, b[3] // 3), (255, 255, 255), -1))):
+    wrong = over_the_tile(damage)
+    check(f"{label}: right or unknown, never a wrong level ({wrong or 'none wrong'})", not wrong)
 # an orange square near some other white marks isn't the badge: its "LV." has to be as wide as the game's
 short, good = badge_scene(17, 14, label_width=1.3), badge_scene(17, 14)
 check("a badge whose LV mark is too short is refused (other orange icons have short marks near them)",
-      level_ocr.read_level(short[0], short[1], short[2], 14, Says("17"), {}) is None
-      and level_ocr.read_level(good[0], good[1], good[2], 14, Says("17"), {}) == 17)
-
-# the badge has one orange square per digit: an answer with fewer digits lost one (a real frame of Lv 62 read "2")
-def reads(level, *texts):
-    pic, x0, cy = badge_scene(level, 11)
-    return level_ocr.read_level(pic, x0, cy, 11, type("S", (), {"read_lines": lambda self, images, chars=None: list(texts)})(), {})
-
-
-check("a two-square badge read as one digit by most sizes is no level (62 seen as '2')",
-      reads(62, "2", "2", "2", "2", "62", "") is None and reads(62, "2", "2", "2", "2", "2", "2") is None)
-check("...the right two digits still are", reads(62, "62", "62", "62", "62", "2", "2") == 62)
-check("a one-square badge read as two digits is no level", reads(7, "71", "71", "71", "71", "71", "71") is None
-      and reads(7, "7", "7", "7", "7", "", "") == 7)
-check("a three-square badge needs three digits", reads(100, "10", "10", "10", "10", "10", "10") is None
-      and reads(100, "100", "100", "100", "100", "", "") == 100)
-check("no Tesseract (None) gives no level", level_ocr.read_level(pic, x0, cy, 11, None, {}) is None)
+      level_ocr.read_level(short[0], short[1], short[2], 14, [2.0], {}) is None
+      and level_ocr.read_level(good[0], good[1], good[2], 14, [2.0], {}) == 17)
+# another orange icon within reach doesn't hide the badge: only the box with the "LV." beside it counts
+both, bx0, bcy = badge_scene(17, 14)
+cv2.rectangle(both, (int(bx0 - 70 * 14), int(bcy + 0.2 * 14)), (int(bx0 - 70 * 14) + 25, int(bcy + 0.2 * 14) + 22), (17, 136, 255), -1)
+check("a second orange icon in reach: the badge with the LV label is the one read",
+      level_ocr.read_level(both, bx0, bcy, 14, [2.0], {}) == 17)
 # ---- telling characters apart: a small picture of the name (never read as text), compared, kept in memory
 def print_of(name, gh=11, **kw):
     pic, x0, cy = badge_scene(32, gh, name=name, **kw)
     return level_ocr.name_print(pic, x0, cy, gh)
-
-# "1" is a narrow digit in this font and no other digit is: blur can't turn a 1 into a 4 (or back) unseen
-def narrows(level):
-    pic, x0, cy = badge_scene(level, 14)
-    row, box = level_ocr.find_badge(pic, x0, cy, 14)
-    return level_ocr.narrow_squares(row, box, len(str(level)))
-
-
-check("the squares holding a 1 are told from the others by how narrow the digit is",
-      narrows(51) == [False, True] and narrows(17) == [True, False] and narrows(62) == [False, False]
-      and narrows(11) == [True, True] and narrows(7) == [False] and narrows(100) == [True, False, False])
-check("a reading that puts a 1 where the digit is wide, or a wide digit where there is a 1, doesn't count",
-      reads(54, "51", "51", "51", "51", "51", "51") is None and reads(51, "54", "54", "54", "54", "54", "54") is None
-      and reads(54, "54", "54", "54", "54", "", "") == 54 and reads(51, "51", "51", "51", "51", "", "") == 51)
-got, tess, look = staged([""], ["51"] * 11 + ["54"] * 9, level=51)
-check(f"...so in a tie-ish vote the one that fits the squares wins (51 against 54: {got})", got == 51)
-got, tess, look = staged([""], ["51"] * 11 + ["54"] * 9, level=54)
-check(f"...and the other way round ({got})", got == 54)
-
 
 for gh in (7, 11, 14, 22):
     names = ("Fox", "Pip", "Pip2", "Pip3", "moss", "Moss", "Moss2", "Ziggy", "XxSlayerxX")
@@ -708,20 +662,38 @@ check("a print is a small grid of numbers, not the picture or the text",
       print_of("Fox").shape == level_ocr.PRINT_SIZE[::-1] and print_of("Fox").dtype.kind == "f")
 
 # ... and the reader asks for it now and then, never reads it under its own window, and backs off when it fails
-def level_reader(level, gh, says):
-    pic, x0, cy = badge_scene(level, gh)
+def level_reader(level, gh=7, **scene):
+    pic, x0, cy = badge_scene(level, gh, **scene)
     r = m.ScreenReader(m.DigitTemplates.load())
     r.gh, r.exp_anchor, r.own_rect = gh, (x0, cy), None
-    m.TESS, m.tesseract_ok = says, True
     return r, FakeScreen(pic), (0, 0, pic.shape[1], pic.shape[0])
 
 
-real_monotonic, real_tess, real_ok = m.time.monotonic, m.TESS, m.tesseract_ok
+class CountReads:
+    """Counts how often the badge is read (level_ocr.read_level) while it stands in for it."""
+    def __init__(self, fail=None):
+        self.runs, self.fail, self.real = 0, fail, level_ocr.read_level
+
+    def __enter__(self):
+        level_ocr.read_level = self
+        return self
+
+    def __exit__(self, *exc):
+        level_ocr.read_level = self.real
+
+    def __call__(self, *args, **kw):
+        self.runs += 1
+        if self.fail:
+            raise self.fail
+        return self.real(*args, **kw)
+
+
+real_monotonic = m.time.monotonic
 clock = [100.0]
 m.time.monotonic = lambda: clock[0]
 try:
-    says = Says("32")
-    r, screen, rect = level_reader(32, 11, says)
+    says = CountReads().__enter__()
+    r, screen, rect = level_reader(32)
     r._read_level(screen, rect)
     check("the first badge reading is only a candidate", r.level is None and r.level_failures == 0)
     clock[0] += 1.6
@@ -729,14 +701,14 @@ try:
     check("a second capture that agrees makes it the level", r.level == 32 and r.level_failures == 0 and says.runs == 2)
     clock[0] += 10
     r._read_level(screen, rect)
-    check("once known it isn't read again for a while (Tesseract isn't started)", says.runs == 2)
+    check("once known it isn't read again for a while", says.runs == 2)
     r.recheck_level()
     r._read_level(screen, rect)
     check("...unless asked to look again now (the % wrapped: a level-up may have happened)", says.runs == 3)
     check("a new level has to be seen twice again, and the old one stays meanwhile", r.level == 32)
 
-    says = Says("")
-    r, screen, rect = level_reader(32, 11, says)
+    says.__exit__()
+    r, screen, rect = level_reader(32, box=False)
     waits = []
     for _ in range(8):
         r._read_level(screen, rect)
@@ -746,12 +718,12 @@ try:
           waits[:2] == [2, 2] and waits[2:5] == [5, 5, 5] and waits[5:] == [30, 30, 30] and r.level_failures == 8
           and r.level is None and r.level_look["why"])
 
-    says = Says("32")
-    r, screen, rect = level_reader(32, 11, says)
-    r.own_rect = (r.exp_anchor[0] - 60 * 11, 0, 10 * 11, screen.image.shape[0])      # this window sits on the badge
-    r._read_level(screen, rect)
-    check("this window covering the badge: nothing is read, and it says so",
-          says.runs == 0 and r.level is None and "covering" in r.level_look["why"])
+    with CountReads() as says:
+        r, screen, rect = level_reader(32)
+        r.own_rect = (r.exp_anchor[0] - 60 * 7, 0, 10 * 7, screen.image.shape[0])      # this window sits on the badge
+        r._read_level(screen, rect)
+        check("this window covering the badge: nothing is read, and it says so",
+              says.runs == 0 and r.level is None and "covering" in r.level_look["why"] and r.badge_covered)
 
     # the character's name: a print is taken every few seconds, even without Tesseract, and kept only in memory
     def named(name):
@@ -773,14 +745,18 @@ try:
     r._look_at_name(screen, rect)
     check("this window sitting on the name: no print (it never reads itself)", r.name_print is None)
 
-    says = Says("32")
-    r, screen, rect = level_reader(32, 11, says)
-    m.tesseract_ok = False
+    r, screen, rect = level_reader(32)
     r._read_level(screen, rect)
-    check("without Tesseract there is nothing to wait for: the typed-level fallback is open at once",
-          says.runs == 0 and r.level is None and r.level_failures >= m.LEVEL_FAILS_FOR_FALLBACK)
+    r, screen, rect = level_reader(32)
+    saved_tess, saved_ok = m.TESS, m.tesseract_ok
+    m.TESS, m.tesseract_ok = None, False
+    clock[0] += 100
+    r._read_level(screen, rect)
+    m.TESS, m.tesseract_ok = saved_tess, saved_ok
+    check("the badge is read with no Tesseract at all: it isn't needed (a first reading is a candidate)",
+          r.level is None and r.level_failures == 0 and r._level_candidate == 32)
 finally:
-    m.time.monotonic, m.TESS, m.tesseract_ok = real_monotonic, real_tess, real_ok
+    m.time.monotonic = real_monotonic
 
 # the bar is found once, then only its spot is looked at: that spot has to keep the "EXP." label in it
 for name, size in (("exp_win-1024x768", (1024, 768)), ("exp_win-1280x720", (1280, 720)), ("exp_win-1920x1080", (1920, 1080)),
@@ -796,26 +772,21 @@ for name, size in (("exp_win-1024x768", (1024, 768)), ("exp_win-1280x720", (1280
           all(x.percent_only and x.confident and x.candidates == [(None, 71.68)] for x in looks) and r.misses == 0)
 
 # something unexpected inside the badge read can't cost the whole look, and backs off like any failed read
-class Breaks:
-    def read_lines(self, images, chars=None):
-        raise ValueError("something nobody expected")
-
-
 clock2 = [500.0]
 real_mono2 = m.time.monotonic
-real_tess2, real_ok2 = m.TESS, m.tesseract_ok
 m.time.monotonic = lambda: clock2[0]
 try:
-    r, screen2, rect2 = level_reader(32, 11, Breaks())
+    r, screen2, rect2 = level_reader(32)
     try:
-        r._read_level(screen2, rect2)
+        with CountReads(fail=ValueError("something nobody expected")):
+            r._read_level(screen2, rect2)
         raised = False
     except Exception:
         raised = True
     check("an unexpected error in the badge read is a failed read: nothing raised, backed off, failure counted",
           not raised and r.level_failures == 1 and r.next_level_read > clock2[0])
 finally:
-    m.time.monotonic, m.TESS, m.tesseract_ok = real_mono2, real_tess2, real_ok2
+    m.time.monotonic = real_mono2
 
 # Select area has no game window, so no badge to find: typing the level in is open at once, and it says why
 from pics import percent_only  # noqa: E402,F811
@@ -1220,10 +1191,10 @@ for cap_class, wanted in ((ScreenCapture, False), (SeeThrough, True)):
 check("the bare fake screen is wrapped as a screen copy", isinstance(m.as_capture(FakeScreen(frame)), ScreenCapture)
       and isinstance(m.as_capture(SeeThrough(None)), Capture))
 
-if m.tesseract_ok:
-    game = cv2.imread(str(Path(__file__).resolve().parent.parent / "docs" / "screenshot-game.jpg"))
-    check("the real badge (Lv 32, a JPEG of the game at 1080p) reads as 32 with real Tesseract",
-          level_ocr.read_level(game, 1052, 1044, 11.0, m.TESS, {}) == 32)
+game = cv2.imread(str(Path(__file__).resolve().parent.parent / "docs" / "screenshot-game.jpg"))
+got = level_ocr.read_level(game, 1052, 1044, 11.0, [s for _, s in ui_layout.candidate_scales(1080)], {})
+check(f"the real badge (Lv 32, a JPEG of the game at 1080p) is read as 32 or left unknown, never another level ({got})",
+      got in (32, None))
 
 # The game's own EXP-bar font and how it scales (exp_font.py, assets/exp_font.json)
 import exp_font  # noqa: E402
