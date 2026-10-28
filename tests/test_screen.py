@@ -1518,14 +1518,14 @@ try:
     unit.read = lambda font, lay: GOOD
     check("shadow: ...then it runs again", unit.look(img, GOOD, 5.0).category == "agree")
 
-    unit = shadow_unit(GOOD, cost_ms=6)          # v2 costs 60% of today's reader: every other look
+    unit = shadow_unit(GOOD, cost_ms=15)         # v2 costs 150% of today's reader: every other look
     cats = [unit.look(img, GOOD, 10.0).category for _ in range(shadow_mod.GUARD_MIN + 10)]
     tail = cats[shadow_mod.GUARD_MIN + 2:]
-    check("shadow CPU guard: more than half of today's cost runs v2 every other look (the rest counted as skipped)",
+    check("shadow CPU guard: more than today's cost runs v2 every other look (the rest counted as skipped)",
           unit.thinned and not unit.stopped and tail.count("skipped") >= 3 and tail.count("agree") >= 3 and unit.counts["skipped"] > 0)
-    unit = shadow_unit(GOOD, cost_ms=12)         # v2 costs more than today's reader: off for the session
+    unit = shadow_unit(GOOD, cost_ms=100)        # v2 costs 10 times today's reader: off for the session
     cats = [unit.look(img, GOOD, 10.0).category for _ in range(shadow_mod.GUARD_MIN + 10)]
-    check("shadow CPU guard: costing more than today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
+    check("shadow CPU guard: costing 8 times today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
 
     # Today's reader sees no bar (a menu, the login screen): v2's whole-strip search costs many times today's there
     # (0.15-1 s on a busy 4K/5K picture), so it searches at most every NOBAR_SECONDS and the CPU guard leaves it out.
@@ -1559,7 +1559,7 @@ try:
     second = unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)])
     check("shadow: a look between whole searches tries only the boxes (nothing there = not a look, no count)",
           first is not None and second is None and calls[-1] is False and unit.counts["neither"] + unit.counts["old_only"] + unit.counts["v2_only"] == 1)
-    unit.times.extend([(10.0, 9.0)] * shadow_mod.GUARD_MIN)     # (v2 at 90% of today's: the guard thins it to every other look)
+    unit.times.extend([(10.0, 15.0)] * shadow_mod.GUARD_MIN)    # (v2 at 150% of today's: the guard thins it to every other look)
     before = unit.counts["skipped"]
     thin = [unit.look(img, None, 30.0, searching=True, spots=[(0, 0, 50, 30)]) for _ in range(6)]
     check("shadow: while the guard thins v2, a quick look it doesn't take isn't counted as skipped (only real looks are)",
@@ -2092,13 +2092,13 @@ try:
     mesos.look(1500, 5.0, part_unit(ValueError("boom"))[1])
     check("part shadow: one part's error rests only that part", mesos.idle() and not party.idle())
 
-    unit, run = part_unit(1500, cost_ms=6)
+    unit, run = part_unit(1500, cost_ms=15)
     cats = [unit.look(1500, 10.0, run).category for _ in range(shadow_mod.GUARD_MIN + 10)]
-    check("part shadow CPU guard: more than half of today's cost runs v2 every other look (the rest counted as skipped)",
+    check("part shadow CPU guard: more than today's cost runs v2 every other look (the rest counted as skipped)",
           unit.thinned and cats[shadow_mod.GUARD_MIN + 2:].count("skipped") >= 3)
-    unit, run = part_unit(1500, cost_ms=12)
+    unit, run = part_unit(1500, cost_ms=100)
     cats = [unit.look(1500, 10.0, run).category for _ in range(shadow_mod.GUARD_MIN + 10)]
-    check("part shadow CPU guard: costing more than today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
+    check("part shadow CPU guard: costing 8 times today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
     cheap, run2 = part_unit(1500, name="party", cost_ms=1)
     for _ in range(shadow_mod.GUARD_MIN + 10):
         cheap.look(1500, 10.0, run2)
