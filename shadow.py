@@ -25,7 +25,7 @@ THIN_RATIO, OFF_RATIO = 0.5, 1.0
 ERROR_PAUSE = 60            # seconds v2 is skipped after it raised
 STRIP_SECONDS = 10          # v2 may grab the bottom strip itself this often at most
 NOBAR_SECONDS = 10          # ...and search for a bar today's reader doesn't see this often at most
-NOBAR_BY_PART = {"exp": NOBAR_SECONDS, "mesos": NOBAR_SECONDS, "party": NOBAR_SECONDS}      # (each part can differ)
+NOBAR_BY_PART = {"exp": 15, "mesos": NOBAR_SECONDS, "party": NOBAR_SECONDS}      # (each part can differ)
 KEEP = 3                    # disagreements kept (pictures of the EXP bar only, in memory)
 
 # category: what happened this look (one of CATEGORIES); ms: v2's time; spot: the EXP bar's box in the picture
@@ -187,10 +187,11 @@ class Shadow(_Guarded):
 
     # ---- one look
     def look(self, img, old, old_ms, old_lay=None, hint=None, more=None, old_img=None, own=None, searching=False,
-             recheck=None):
+             recheck=None, spots=()):
         """Runs v2 on `img` (the picture today's reader just read) and compares. `old`: today's confident
         answer or None. `hint`: a box (x0, y0, x1, y1) in img where v2 saw the bar last time. `more()`: a
         bigger picture as (img, dx, dy) (the bottom strip, dx/dy where it starts relative to img) or None.
+        `spots`: boxes in img where the bar should be at each UI scale the game might use; tried after the hint.
         `old_img`: the picture today's reader read, if v2 was given another (for the crop kept in a report).
         `own()`: v2's own small picture (when `img` doesn't hold the remembered spot) or None; called only once v2
         really runs, so a look v2 skips (off, paused, stopped, thinned) grabs nothing, and its time counts as v2's.
@@ -203,10 +204,14 @@ class Shadow(_Guarded):
         for its next search while there's no bar)."""
         if self.idle():
             return None
+        quick = False
         if searching and not (self.seen and (hint is not None or own is not None)):
             if time.monotonic() - self.nobar_at < self.nobar_seconds:
-                return None
-            self.nobar_at = time.monotonic()
+                if not spots:
+                    return None
+                quick = True            # (between whole-picture searches, only the cheap boxes where the bar should be)
+            else:
+                self.nobar_at = time.monotonic()
         if not self._allowed():
             self.counts["skipped"] += 1
             return Result("skipped", None, None, None)
@@ -217,15 +222,22 @@ class Shadow(_Guarded):
             mine = own() if own is not None else None
             if mine is not None:
                 img, hint = mine, None
-            lay, dx, dy = self.find(img, hint), 0, 0
+            lay, dx, dy = self._find(img, hint, spots, quick), 0, 0
+            if quick and lay is None:
+                return None             # (nothing in the boxes: not a look, costs nothing but the boxes)
             if lay is None and more is not None and time.monotonic() - self.strip_at >= STRIP_SECONDS:
                 self.strip_at = time.monotonic()
                 big = more()
                 if big is not None:
                     self.counts["grabs"] += 1
-                    lay = self.find(big[0], None)
+                    lay = self._find(big[0], None, [(a - big[1], b - big[2], c - big[1], d - big[2]) for a, b, c, d in spots])
                     dx, dy = big[1], big[2]
             got = self.read(self.font, lay) if lay is not None else None
+            if got is None and lay is not None and (hint is not None or spots) and not quick and mine is None and not (dx or dy):
+                # (a small box can judge contrast differently from the whole picture: read what a full search finds too)
+                whole = self.find(img, None)
+                if whole is not None:
+                    lay, got = whole, self.read(self.font, whole)
             if got is not None and got[0] is not None and not self.fits(*got):
                 got = None
             if got is not None and got[0] is None and not 0 <= got[1] <= 100:
@@ -260,6 +272,11 @@ class Shadow(_Guarded):
             g = lay.gh
             spot = (int(lay.box[0] - 6 * g) + dx, int(lay.cy - 2 * g) + dy, int(lay.box[2] + 3 * g) + dx, int(lay.cy + 2 * g) + dy)
         return Result(kind, ms, spot, got, why)
+
+    def _find(self, img, hint, spots, quick=False):
+        if quick:
+            return self.find(img, hint, spots, False)
+        return self.find(img, hint, spots) if spots else self.find(img, hint)
 
     def _keep(self, kind, old, new, img, old_lay, lay, dx, dy, v2_img):
         """The EXP bar's crop (no class or name row), with both answers, for a bug report. `img` is today's picture,
