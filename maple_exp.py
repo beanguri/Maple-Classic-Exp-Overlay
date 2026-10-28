@@ -55,6 +55,7 @@ import exp_font
 import healthlog
 import level_ocr
 import ocr
+import potion_bar
 import potions
 import report
 import shadow
@@ -107,7 +108,7 @@ WINDOW_SCAN_SECONDS = 1     # ...and while a shop, storage or trade window is op
 WINDOW_GRACE = 4            # seconds a closed window still counts, so its last change is read
 WINDOW_NAMES = {"shop": "NPC shop", "storage": "Storage", "trade": "Trade"}
 POTION_SECONDS = 3          # how often the potion bar is read (a small picture, no need for more)
-POTION_FULL_LOOK = 15       # every this many reads the bar is looked for over its whole search range again
+POTION_NOBAR_SECONDS = 9    # ...and how often it is looked for while it isn't there (login, loading, menus: a search costs more)
 OUTLINE_SECONDS = 8         # how often the (costly) search for a see-through mesos box may run
 LEVEL_RECHECK_SECONDS = 30  # a level read from the badge is looked at again this often (it only changes at a level-up)
 V2_SPOTS_MAX = 8            # window sizes whose reader v2 spot is remembered in the config
@@ -1810,8 +1811,10 @@ class ScreenReader:
         self.window = None          # "shop", "storage" or "trade" while one is open (or just closed)
         self.window_until = 0.0     # ...and until when it still counts
         self.window_box = False     # the mesos box being read belongs to such a window (not the inventory)
-        self.potion_table = self.potion_digits = None    # loaded at the first look at the potion bar
-        self.next_bar, self.bar_reads, self.bar_shift = 0.0, 0, (0, 0)
+        self.potion_table = None    # loaded at the first look at the potion bar
+        self.next_bar = 0.0
+        self.bar_last = None        # the BarLook of the last good look at the potion bar (tried first next time)
+        self.bar_runs = {}          # slot index -> the count reader's Run at the last look (checked first next time)
         self.next_outline = 0.0     # the earliest time to search for a see-through mesos box again
         self.party_area = None      # where the party list was last seen, on screen
         self.next_scan = 0.0
@@ -1985,7 +1988,7 @@ class ScreenReader:
                         self._read_level(capture, rect)
         return self._with_part_notes(reading._replace(
             level=(self.level, "badge") if self.level and reading.percent_only and self.mode == "window" else None,
-            tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect)))
+            tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect) or reading.ui))
 
     def _ui_mode(self, reading, rect):
         """"default" or "ideal" when this look can tell (the EXP bar was found, so its digit height is this window's),
@@ -2435,40 +2438,42 @@ class ScreenReader:
                 bar = self._read_potion_bar(capture, rect, notes)
                 if bar is not None:
                     self._part_ok("potions")
-                    self._tried("potions", bool(bar))
+                    if bar.seen:                                # (tried only when the bar was there)
+                        self._tried("potions", all(s.count is not None for s in bar.slots if s.kind == "consumable"))
         return reading._replace(mesos=mesos, mesos_image=image, mesos_boxes=boxes, party=party,
-                                mesos_at=moved, window=window, bar=bar, note=" ".join(notes) or None)
+                                mesos_at=moved, window=window, bar=bar, note=" ".join(notes) or None,
+                                layout=bar.layout if bar is not None and bar.seen else None,
+                                ui=bar.mode if bar is not None and bar.seen else None)
 
     def _read_potion_bar(self, capture, rect, notes):
-        """The potions and food on the potion bar as a tuple of potions.Slot (empty: none, or it
-        can't be seen), or None when there is nothing to report. Read every few seconds."""
+        """What the potion bar shows as a potion_bar.PotionLook, or None when there is nothing to report (the
+        game wasn't captured). Read every few seconds, less often while there is no bar."""
         capture = self.capture = as_capture(capture)
         self.next_bar = time.monotonic() + POTION_SECONDS
         wx, wy, ww, wh = rect
         if self.potion_table is None:
             try:
-                self.potion_table = potions.PotionTable.load(ASSETS / "potion_table.json")
-                self.potion_digits = potions.load_digits(ASSETS / "potion_digits.npz")
+                self.potion_table = potion_bar.load_assets(ASSETS)
             except Exception as e:
                 self._part_failed("potions", e)
                 self.next_bar = float("inf")                    # without it there's nothing to read
                 return None
-        bx, by, bw, bh = potions.bar_crop_box(ww, wh)
+        bx, by, bw, bh = potion_bar.grab_box(ww, wh, self.bar_last)
         if self._blocked(wx + bx, wy + by, bw, bh):
             notes.append("This window is covering the potion bar.")
-            return ()
+            return potion_bar.NOT_SEEN
         shot = capture.grab(wx + bx, wy + by, bw, bh)
         if not shot:
-            return ()
+            return None
         img, sx, sy = shot
-        ex, ey, scale = potions.bar_estimate(ww, wh)
-        full = self.bar_reads % POTION_FULL_LOOK == 0
-        origin = (ex + wx - sx + (0 if full else self.bar_shift[0]), ey + wy - sy + (0 if full else self.bar_shift[1]))
-        slots, (ox, oy) = potions.read_bar(img, scale, origin, self.potion_table, self.potion_digits,
-                                           search=potions.SEARCH if full else 1)
-        self.bar_shift = (ox - (ex + wx - sx), oy - (ey + wy - sy))
-        self.bar_reads += 1
-        return tuple(slots)
+        got = ui_layout.mode_from_gh(self.gh, wh) if self.gh and self.mode == "window" else None
+        hint = potion_bar.Hint(self.bar_last, got, self.bar_runs)
+        look = potion_bar.read_potions(img, ww, wh, (sx - wx, sy - wy), hint, self.potion_table)
+        self.bar_last = potion_bar.bar_from_look(look, ww, wh)
+        self.bar_runs = {s.index: s.run for s in look.slots if s.run is not None}
+        if not look.seen:
+            self.next_bar = time.monotonic() + POTION_NOBAR_SECONDS
+        return look
 
     def _readable(self, img, field):
         """Clear mesos digits at field? (Always yes while the mesos font is still being
@@ -3314,11 +3319,8 @@ class Session:
         return result
 
     def look_at_bar(self, look, now, window=None):
-        """Feeds a look at the potion bar (a potions.PotionLook; today's reader still hands over a tuple of
-        potions.Slot): what went down since the last look was used. `window` is the shop, storage or trade
+        """Feeds a look at the potion bar (a potion_bar.PotionLook): what went down since the last look was used. `window` is the shop, storage or trade
         window open at the look, if any."""
-        if not isinstance(look, potions.PotionLook):
-            look = potions.look_from_slots(look)
         self.potions.observe(look, self.exp.running, now, bool(window))
 
     def map_blind(self):
@@ -4239,7 +4241,7 @@ class App:
         self.recent, self.health = Recent(40, self.started), Health()      # for bug reports
         self.autolog = AutoLog(self.cfg["gap_seconds"])
         self.map_name = None
-        self.potion_bar = ()                # what the potion bar showed at the last look: potions.Slot tuple
+        self.potion_bar = potion_bar.NOT_SEEN    # what the potion bar showed at the last look: a potion_bar.PotionLook
         self.in_town = False                # on a town map: nobody farms there, so nothing is logged
         self.level = None
         self.note = None

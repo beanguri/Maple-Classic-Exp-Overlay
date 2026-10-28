@@ -91,14 +91,14 @@ check("Ideal at 1080p puts the potion bar where it was found on the Ideal frames
 # ---- the potion bar's types (other tickets build against these exact fields)
 check("SlotSpot fields", potion_bar.SlotSpot._fields == ("index", "rect", "style"))
 check("BarLook fields", potion_bar.BarLook._fields == ("layout", "mode", "scale", "origin", "slots"))
-check("SlotRead fields", potion_bar.SlotRead._fields == ("index", "rect", "style", "item", "kind", "count"))
+check("SlotRead fields", potion_bar.SlotRead._fields == ("index", "rect", "style", "item", "kind", "count", "run"))
 check("PotionLook fields", potion_bar.PotionLook._fields == ("seen", "layout", "mode", "scale", "slots"))
-check("Hint fields", potion_bar.Hint._fields == ("last", "mode_scale"))
+check("Hint fields", potion_bar.Hint._fields == ("last", "mode_scale", "runs"))
 check("layouts: keyboard and the two controller D-pad modes",
       potion_bar.LAYOUTS == ("keyboard", "controller-standard", "controller-cross"))
 check("controller layouts are told apart from keyboard", [potion_bar.is_controller(x) for x in potion_bar.LAYOUTS]
       == [False, True, True] and not potion_bar.is_controller(None))
-check("not built yet: the reader says 'not seen', never a guess",
+check("no picture: the reader says 'not seen', never a guess",
       potion_bar.read_potions(None, 1920, 1080) == potion_bar.NOT_SEEN and not potion_bar.NOT_SEEN.seen)
 
 # ---- the health report contract (the site and the overlay are tested against it; 0.9.13's cases are the ones without "v2:")
