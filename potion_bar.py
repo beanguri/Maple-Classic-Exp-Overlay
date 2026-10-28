@@ -163,6 +163,7 @@ def _look(fit, mode, scale, window_w, window_h):
 
 
 # ---------------------------------------------------------------- reading the slots
+SKILL_MAX = 0.20           # a slot is called a skill icon only this close to one seen on the bar
 COUNT_ICON_MAX = 0.40       # a count is only taken from a slot whose icon is this clearly the item: a cursor or popup over the
                             # slot spoils the icon too, and the digits it hides can't be told from a count that ends
 
@@ -178,6 +179,8 @@ def _slot_item(table, crop_bgr):
     if found is None:
         return None, None, 1.0
     name, kind, dist = found
+    if kind == "skill":                  # (a damaged picture of an item can land here too: only a near-exact match says "skill")
+        return (None, "skill", dist) if dist <= SKILL_MAX else (None, None, 1.0)
     return table.aliases.get(name, name), ("consumable" if kind == "consumable" else "other"), dist
 
 
