@@ -53,7 +53,7 @@ def post(body, ip):
     return r.status, json.loads(data or b"{}")
 
 
-now = time.time()
+now = time.time() // 86400 * 86400 + 12 * 3600     # midday UTC today: the hours the tests step through never cross into the next day
 clock = [now - 86400]
 rnd = random.Random(7)
 folder = Path(tempfile.mkdtemp())

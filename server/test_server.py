@@ -533,9 +533,11 @@ def when(hours_ahead, minute=0):
 
 
 def stored(hours_ahead, minute, who, **kw):
-    """Sends one run (as if `hours_ahead` hours from now) and returns its (mesos_hr, exp_hr) as stored."""
+    """Sends one run (as if `hours_ahead` hours from now) and returns its (mesos_hr, exp_hr) as stored. It comes from
+    an overlay new enough that its mesos count after MESOS_RULE_FROM too, unless `version` says otherwise."""
     started = when(hours_ahead - 1, minute)
-    r = call("/api/runs", {"install": who, "runs": [dict(run(started, 50000), **kw)]}, later=hours_ahead)
+    sent = dict(run(started, 50000), **{"version": f"{MESOS_VERSION}-beta", **kw})
+    r = call("/api/runs", {"install": who, "runs": [sent]}, later=hours_ahead)
     rows = sql(f"SELECT mesos_hr, exp_hr FROM runs WHERE install = '{who}' AND started = '{started}'")
     return (rows[0]["mesos_hr"], rows[0]["exp_hr"]) if r.get("received") == 1 and rows else ("not stored", r)
 
@@ -570,7 +572,8 @@ else:
 def players_at(map_name, level, hours_ahead, job="Fighter", n=3, **kw):
     for _ in range(n):
         call("/api/runs", {"install": install(), "runs": [dict(run(when(hours_ahead - 6, 15 * i), 45000, level=level,
-                                                                  map_name=map_name, job=job), **kw) for i in range(4)]},
+                                                                  map_name=map_name, job=job),
+                                                              **{"version": f"{MESOS_VERSION}-beta", **kw}) for i in range(4)]},
              later=hours_ahead)
 
 
