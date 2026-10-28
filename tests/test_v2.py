@@ -283,5 +283,38 @@ check("mesos v2: two boxes = the player's can't be told: no value", look.value i
 check("mesos v2: nothing on the picture is not_found", mesos_v2.read_mesos_v2(np.full((200, 300, 3), 128, np.uint8), [1.0])[0].why == "not_found")
 check("mesos v2: the font has the ten digits and the comma", sorted(glyphs.Font.load("mesos").chars) == sorted("0123456789,"))
 
+# ---- the potion table at the controller's slot style (numbers only: no pictures needed)
+import potions  # noqa: E402
+
+table = potion_bar.load_assets()
+real = [k for k, kind in enumerate(table.kinds) if kind in ("consumable", "other_ignore")]
+check("every potion, food and known other item has a controller drawing in the table",
+      all(table.items[k].get("fingerprint_controller") for k in real))
+for style, matrix in (("controller", table.matrix_controller), ("keyboard", table.matrix)):
+    swapped = [(table.names[k], found[0]) for k in real
+               for found in [table.identify(matrix[k], style)] if found is not None and found[0] != table.names[k]]
+    check(f"an item drawn at the {style} style is itself or refused, never another item ({swapped or 'none swapped'})", not swapped)
+close = sorted(float(table._distances(table.matrix_controller[a][None, :], table.matrix_controller[b])[0])
+               for i, a in enumerate(real) for b in real[i + 1:])
+check(f"no two items' controller drawings are closer than 0.3 (the closest pair: {close[0]:.2f})", close[0] >= 0.3)
+leaks = []
+for k, kind in enumerate(table.kinds):
+    if kind != "skill":
+        continue
+    for key, style in (("seen_controller", "controller"), ("seen", "keyboard")):
+        for fp in table.items[k].get(key, ()):
+            found = table.identify(np.array(fp, np.float32), style)
+            if found is not None and found[1] != "skill":
+                leaks.append((table.items[k]["name"], style, found[0]))
+check(f"no skill icon the table knows (either slot style, damaged copies too) reads as a potion ({leaks or 'none'})", not leaks)
+check("the controller has its own skill entries, and controller-seen items", any(n.startswith("Controller skill icon") for n in table.names)
+      and sum(1 for i in table.items if i.get("seen_controller") and i["kind"] == "consumable") >= 4)
+check("the controller's light-background rule is looser than the keyboard's, and still refuses the pink tiles",
+      potions.CONTROLLER_RING_BG_MIN < potions.RING_BG_MIN and potions.CONTROLLER_RING_BG_MIN > 0.18)
+shown = potion_bar.controller_rects(1920, 1080, 1.40625)
+check("the controller's cluster has 8 cells numbered 0-7, none overlapping",
+      sorted(shown) == list(range(8)) and all(not (a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
+                                               for i, a in shown.items() for j, b in shown.items() if i < j))
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
