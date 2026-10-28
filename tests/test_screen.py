@@ -531,6 +531,27 @@ try:
 finally:
     m.time.monotonic = real_monotonic
 
+# ---- a damaged or missing potion table (B01): the overlay keeps reading, the potions say nothing, and it isn't retried every look
+real_assets = m.ASSETS
+for label, text in (("missing", None), ("not JSON", "{{{"), ("wrong shape", '{"items": "x"}'), ("bad fingerprint", '{"items": [{"name": "A", "fingerprint": [1, 2]}]}')):
+    bad = Path(tempfile.mkdtemp())
+    if text is not None:
+        (bad / "potion_table.json").write_text(text, encoding="utf-8")
+    potion_bar._assets.pop(str(bad), None)
+    reader = m.ScreenReader(m.DigitTemplates.load())
+    reader.gh = 11
+    reader.mesos_digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+    clock = [1000.0]
+    m.time.monotonic = lambda: clock[0]
+    m.ASSETS = bad
+    try:
+        r = reader._read_extras(FakeScreen(scene), (0, 0, 1920, 1080), blank)
+        check(f"a {label} potion table: the look still comes back, with no bar", r is not None and r.bar is None)
+        check("...and the reader doesn't try to load it again", reader.next_bar == float("inf") and "potions" in reader.part_failed_at)
+    finally:
+        m.ASSETS = real_assets
+        m.time.monotonic = real_monotonic
+
 # ---- the costly outline search for a see-through mesos box doesn't run on every look
 name, info = sorted(PARTS["inventory"].items())[1]
 inv, gh, (bx, by, bw, bh) = cv2.imread(str(FRAMES / name)), info["gh"], info["box"]

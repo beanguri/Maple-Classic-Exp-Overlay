@@ -1593,6 +1593,12 @@ w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 100)))                # a
 w.look(plook(s0=("Red Potion", 99), s1=("Red Potion", 100)))
 check(f"a stack that shows up beside another of the same item is kept apart ({w.t.used})", w.t.used == {"Red Potion": 1})
 
+# two stacks of one item, one of them rising then falling (B01-1: a recorded 3-row bar; the replay's truth once lost one stack's drinks)
+w = Watch()
+for a, b in ((4, 19), (4, 18), (5, 18), (4, 18), (4, 17), (3, 17)):
+    w.look(plook(s1=("Blue Potion", a), s11=("Blue Potion", b)))
+check(f"two stacks of one item: every drop counts, a rise doesn't ({w.t.used})", w.t.used == {"Blue Potion": 4})
+
 # out of sight, then tracking is cut: pause, Reset, map change, idle pause (through the Session, which clears the tracker)
 for how in ("pause", "reset", "map", "idle"):
     s = session()
