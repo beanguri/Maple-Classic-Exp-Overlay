@@ -79,6 +79,8 @@ def _rings(ii, x, y, w, h):
     t = max(1, int(round(min(w, h) / 14)))
     ih, iw = ii.shape[0] - 1, ii.shape[1] - 1
     ok = (x - t >= 0) & (y - t >= 0) & (x + w + t <= iw) & (y + h + t <= ih)
+    if iw < w + 2 * t or ih < h + 2 * t:                # a picture smaller than one ring (the window cut off by the screen's edge)
+        return np.full(np.broadcast(x, y).shape, np.nan)
     x = np.clip(x, t, max(t, iw - w - t))
     y = np.clip(y, t, max(t, ih - h - t))
 

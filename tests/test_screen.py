@@ -371,6 +371,16 @@ noise = np.random.default_rng(3).integers(0, 255, (height, width, 3), dtype=np.u
 check("a screen with no bar reads 'not seen'", not potion_bar.read_potions(noise, width, height, assets=TABLE).seen)
 check("...and so does a flat dark screen (login, loading)",
       not potion_bar.read_potions(np.full((height, width, 3), 20, np.uint8), width, height, assets=TABLE).seen)
+# the window partly off the screen: the grab comes back cut, sometimes smaller than one slot
+cut = []
+for w, h in ((800, 600), (1280, 720), (3840, 2160), (5120, 2880)):
+    for pw, ph in ((47, 86), (72, 159), (555, 107), (3008, 120)):
+        x, y = w // 2 + 200, h - min(ph, h) - 20
+        try:
+            cut.append(potion_bar.read_potions(noise[:min(ph, height), :min(pw, width)].copy(), w, h, (x, y), assets=TABLE).seen)
+        except Exception as e:
+            cut.append(type(e).__name__)
+check(f"a cut-off picture smaller than a slot reads 'not seen', never an error ({set(cut)})", set(cut) == {False})
 look = potion_bar.read_potions(make_window({0: ("red", None), 1: ("blue", None)}, width, height, scale), width, height, assets=TABLE)
 check("a known icon with no number is kept with no count (never a made-up one)",
       potions_of(look) == {0: ("Red Potion", None), 1: ("Blue Potion", None)})
