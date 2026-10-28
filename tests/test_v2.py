@@ -281,6 +281,13 @@ pair = np.concatenate([game_box(1234), game_box(5678)], axis=0)
 look, _ = mesos_v2.read_mesos_v2(pair, [1.0])
 check("mesos v2: two boxes = the player's can't be told: no value", look.value is None and look.why == "unclear" and len(look.boxes) == 2)
 check("mesos v2: nothing on the picture is not_found", mesos_v2.read_mesos_v2(np.full((200, 300, 3), 128, np.uint8), [1.0])[0].why == "not_found")
+sliver = []
+for hw in ((1, 1), (1, 200), (200, 1), (3, 3), (14, 143)):          # (a window squeezed to a sliver: no box, never an error)
+    try:
+        sliver.append(mesos_v2.read_mesos_v2(np.zeros(hw + (3,), np.uint8), [1.0, 1.5, 2.0])[0].why)
+    except Exception as e:
+        sliver.append(repr(e)[:60])
+check(f"mesos v2: a picture a pixel or a few wide or tall is not_found, never an error ({sliver})", set(sliver) == {"not_found"})
 check("mesos v2: the font has the ten digits and the comma", sorted(glyphs.Font.load("mesos").chars) == sorted("0123456789,"))
 
 # ---- the potion table at the controller's slot style (numbers only: no pictures needed)
