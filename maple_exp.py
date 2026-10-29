@@ -4175,6 +4175,9 @@ def fmt_num(n):
     return "—" if n is None else f"{n:,.0f}"
 
 
+POTION_UNSEEN_AFTER = 60        # seconds tracking runs without a look at the potion bar before the cost line says so
+
+
 def fmt_short(n):
     if n is None:
         return "—"
@@ -4327,6 +4330,7 @@ class App:
         self.log_open = False
         self.settings_win = self.prices_win = None
         self._price_table = None
+        self._potion_unseen = None          # since when (monotonic) tracking runs and the potion bar isn't in sight
         self.q = queue.Queue()
         self.stop_evt = threading.Event()
         self.last_capture = None
@@ -4529,6 +4533,8 @@ class App:
             root.minsize(self.main.winfo_reqwidth() + 150, self.main.winfo_reqheight())
             root.resizable(True, True)
             size = self.cfg.get("log_size")
+            if size:                                    # (a size saved on a bigger screen mustn't outgrow this one)
+                size = [min(size[0], root.winfo_screenwidth()), min(size[1], root.winfo_screenheight())]
             root.geometry(f"{size[0]}x{size[1]}" if size else "")
         else:
             self.log_panel.grid_remove()
@@ -5943,6 +5949,28 @@ class App:
         cost = self.session.potions.cost(prices.mapping())
         return fmt_num(gross - cost / el * 3600), None
 
+    def _potion_cost_text(self, now):
+        """The "Potion cost" line: the cost so far, with a short hint when it can't be trusted: the bar hasn't been
+        seen for a while, or something used has no price. A cost of 0 shows the hint alone, never a bare 0."""
+        if not self.cfg["potions_on"]:
+            return "—"
+        prices, used = self._prices(), self.session.potions.used
+        cost = fmt_num(self.session.potions.cost(prices.mapping()))
+        if not self.tracker.running or self.potion_bar.seen:
+            self._potion_unseen = None
+        elif self._potion_unseen is None:
+            self._potion_unseen = now
+        hint = None
+        if self._potion_unseen is not None and now - self._potion_unseen >= POTION_UNSEEN_AFTER:
+            hint = "Potion bar not seen"
+        else:
+            names = [n for n, count in used.items() if count > 0 and not prices.get(n)]
+            if names:
+                hint = "No price for: " + ", ".join(names[:2]) + (f" +{len(names) - 2}" if len(names) > 2 else "")
+        if not hint:
+            return cost
+        return f"{cost}  ·  {hint}" if cost != "0" else hint
+
     def _prices(self):
         table = self._potion_table()
         return potions.Prices(table.prices if table else {}, self.cfg["potion_prices"])
@@ -5980,8 +6008,7 @@ class App:
                      "Gained": est(f"{fmt_short(t.gained)}{f'  (+{t.levels} lvl)' if t.levels else ''}"),
                      "Current": (APPROX if t.percent_mode else "") + f"{fmt_num(shown[0])} [{shown[1]:.2f}%]" if shown else "\u2014",
                      "Mesos": mesos, "Mesos / 5 min": fmt_num(m.per_5min(el)),
-                     "Potion cost": (fmt_num(self.session.potions.cost(self._prices().mapping()))
-                                     if self.cfg["potions_on"] else "—"),
+                     "Potion cost": self._potion_cost_text(now),
                      "Net mesos / hr": net,
                      "Left out": (f"+{fmt_short(m.left_out[0])} / -{fmt_short(m.left_out[1])}"
                                   if any(m.left_out) else "—")},

@@ -770,6 +770,90 @@ app.cfg["potions_on"], app.cfg["potion_prices"] = True, {}
 app.session.potions.reset()
 app.meso.per_hour = real_per_hour
 
+# ---- every widget of the main window sits inside it, in every shape, with details open, at every size
+def sticking_out(win):
+    bad, stack = [], list(win.winfo_children())
+    while stack:
+        c = stack.pop()
+        if c.winfo_toplevel() is not win:            # (another window, e.g. a tooltip, has its own box)
+            continue
+        stack.extend(c.winfo_children())
+        if c.winfo_ismapped() and (c.winfo_rootx() + c.winfo_width() > win.winfo_rootx() + win.winfo_width() + 2
+                                   or c.winfo_rooty() + c.winfo_height() > win.winfo_rooty() + win.winfo_height() + 2):
+            bad.append(c.winfo_class())
+    return bad
+box_bad = []
+app.cfg["potions_on"] = True
+app.session.potions.used = {"Mana Elixir": 1234567, "Power Elixir": 7, "Cider": 3}
+for scale in m.UI_SCALES:
+    app.cfg["ui_scale"] = scale
+    app._apply_ui_scale()
+    for shape in m.SHAPES:
+        app.set_shape(shape)
+        for compact in (False, True):
+            app.set_compact(compact)
+            if not compact and not app.view.details_open:
+                app.view._toggle_details()
+            app._update_display()
+            root.update()
+            if root.winfo_reqheight() > root.winfo_screenheight():      # (taller than the screen itself: 200% full with details, flagged B13-2)
+                continue
+            box_bad += [f"{scale}% {shape} {'compact' if compact else 'full'}: {c}" for c in sticking_out(root)]
+app.set_shape(m.SHAPES[0])
+app.set_compact(False)
+if app.view.details_open:
+    app.view._toggle_details()
+app.cfg["ui_scale"] = 100
+app._apply_ui_scale()
+check(f"nothing sticks out of the main window at any size, shape or mode ({box_bad[:3]})", not box_bad)
+shown = app.view.details.itemcget(app.view.details._vals["Potion cost"], "text")
+check("a long potion hint is cut with an ellipsis instead of running into its label", shown.endswith("…") or len(shown) < 20)
+app.session.potions.reset()
+app.cfg["potions_on"] = False
+
+# ---- a log size saved on a bigger screen doesn't outgrow this one
+app.cfg["log_size"] = [root.winfo_screenwidth() + 3000, root.winfo_screenheight() + 3000]
+app.toggle_log()
+root.update()
+check("the log opens no bigger than the screen", root.winfo_width() <= root.winfo_screenwidth() and root.winfo_height() <= root.winfo_screenheight())
+app.toggle_log()
+app.cfg["log_size"] = None
+
+# ---- the potion cost line never says a bare 0 when it can't be trusted (issue #17)
+real_running, real_bar = app.tracker.running, app.potion_bar
+app.cfg["potions_on"], app.cfg["potion_prices"] = True, {}
+app.tracker.running = True
+app.potion_bar = m.potion_bar.PotionLook(True, "keyboard", "default", 1.0, ())
+app._potion_unseen = None
+check("potions off: a dash", (app.cfg.update(potions_on=False), app._potion_cost_text(0.0))[1] == "—")
+app.cfg["potions_on"] = True
+check("bar in sight, nothing used: plain 0", app._potion_cost_text(0.0) == "0")
+app.session.potions.used = {"Red Potion": 20}
+check("bar in sight, priced items: just the cost", app._potion_cost_text(1.0) == "1,000")
+app.session.potions.used = {"Mana Elixir": 3}
+check("an item used with no price says so instead of 0", app._potion_cost_text(1.0) == "No price for: Mana Elixir")
+app.session.potions.used = {"Red Potion": 20, "Mana Elixir": 3}
+check("...and keeps the cost next to the hint", app._potion_cost_text(1.0) == "1,000  ·  No price for: Mana Elixir")
+app.session.potions.used = {"Mana Elixir": 1, "Power Elixir": 1, "Cider": 1}
+check("...three or more are counted", app._potion_cost_text(1.0) == "No price for: Mana Elixir, Power Elixir +1")
+app.cfg["potion_prices"] = {"Mana Elixir": 700, "Power Elixir": 900, "Cider": 5}
+check("a price the player set removes the hint", app._potion_cost_text(1.0) == "1,605")
+app.cfg["potion_prices"] = {}
+app.session.potions.used = {}
+app.potion_bar = m.potion_bar.NOT_SEEN
+app._potion_unseen = None
+check("bar just out of sight: still plain 0", app._potion_cost_text(100.0) == "0")
+check("bar unseen for a while: says so", app._potion_cost_text(100.0 + m.POTION_UNSEEN_AFTER) == "Potion bar not seen")
+app.session.potions.used = {"Red Potion": 2}
+check("...with the cost so far beside it", app._potion_cost_text(200.0) == "100  ·  Potion bar not seen")
+app.potion_bar = m.potion_bar.PotionLook(True, "keyboard", "default", 1.0, ())
+check("the bar back in sight clears it", app._potion_cost_text(201.0) == "100" and app._potion_unseen is None)
+app.potion_bar = m.potion_bar.NOT_SEEN
+app.tracker.running = False
+check("paused: no hint about a bar nobody is watching", app._potion_cost_text(500.0) == "100")
+app.session.potions.reset()
+app.tracker.running, app.potion_bar, app._potion_unseen = real_running, real_bar, None
+
 # ---- towns aren't logged; a minimap that can't be seen pauses
 blank = m.Reading(*([None] * len(m.Reading._fields)))
 app._handle(blank._replace(where="Reading", map="Perion"))
