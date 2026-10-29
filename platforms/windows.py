@@ -298,4 +298,6 @@ class WindowsPlatform(Platform):
         os.startfile(path)
 
     def show_file(self, path):
-        subprocess.Popen(["explorer", f"/select,{path}"])
+        # (Windows looks for a program given by name in this program's own folder first: the full path can't be swapped)
+        explorer = Path(os.environ.get("SystemRoot") or r"C:\Windows") / "explorer.exe"
+        subprocess.Popen([str(explorer), f"/select,{path}"])
