@@ -130,6 +130,7 @@ TRIED_PARTS = {"map name": "map", "class": "class", "mesos": "mesos", "potions":
 STALE_LEVEL_SECONDS = 6          # after another character is found, a reading with the old level is still waiting this long
 PCT_WAIT_NOTES = ("percentage wrapped", "level up?", "level changed", "level ")   # what a %-only bar says while it waits
 LEVEL_FAILS_FOR_FALLBACK = 3    # badge reads that failed in a row before typing the level in is offered
+MAX_COORD = 100_000        # a screen position or size in the settings; more is a hand-edit gone wrong
 DEFAULTS = {"gap_seconds": 15, "transparency": 0, "topmost": True,
             "check_updates": True, "skip_version": "", "ui_scale": 100, "compact": False, "hotkeys_on": True,
             "details": False, "compact_shape": "square", "seen_version": "",
@@ -257,7 +258,7 @@ def good_v2_spots(v):
 def load_config():
     """The saved settings, with anything missing or damaged replaced by the defaults."""
     try:
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))      # (-sig: Notepad can save a BOM in front)
     except FileNotFoundError:
         cfg = {}
     except Exception as e:
@@ -271,6 +272,9 @@ def load_config():
             cfg[key] = default
     cfg["transparency"] = min(MAX_TRANSPARENCY, max(0, cfg["transparency"]))
     cfg["potion_prices"] = potions.clean_prices(cfg["potion_prices"])
+    for key in ("seen_version", "skip_version"):
+        if len(cfg[key]) > 40:                          # (a version is a few characters)
+            cfg[key] = ""
     if cfg["compact_shape"] not in SHAPES:
         cfg["compact_shape"] = "square"
     if cfg["ui_scale"] not in UI_SCALES:
@@ -278,10 +282,10 @@ def load_config():
     keys = cfg.get("hotkeys") if isinstance(cfg.get("hotkeys"), dict) else {}
     cfg["hotkeys"] = {a: keys[a] if a in keys and (keys[a] == "" or parse_hotkey(keys[a])) else k
                       for a, k in DEFAULT_HOTKEYS.items()}            # "" is a hotkey turned off
-    ints = lambda v, n: isinstance(v, list) and len(v) == n and all(type(x) is int for x in v)
-    checks = {"pos": lambda v: ints(v, 2), "log_size": lambda v: ints(v, 2) and min(v) >= 100,
+    ints = lambda v, n: isinstance(v, list) and len(v) == n and all(type(x) is int and abs(x) <= MAX_COORD for x in v)
+    checks = {"pos": lambda v: ints(v, 2), "log_size": lambda v: ints(v, 2) and 100 <= min(v) and max(v) <= MAX_COORD,
               "mesos_box": lambda v: ints(v, 6), "mode": lambda v: v in ("window", "region"),
-              "region": lambda v: isinstance(v, dict) and all(type(v.get(k)) is int and (
+              "region": lambda v: isinstance(v, dict) and all(type(v.get(k)) is int and abs(v[k]) <= MAX_COORD and (
                   k in ("left", "top") or v[k] > 0) for k in ("left", "top", "width", "height")),
               "log_columns": lambda v: isinstance(v, dict), "log_columns_pt": lambda v: isinstance(v, dict),
               "log_open": lambda v: type(v) is bool,

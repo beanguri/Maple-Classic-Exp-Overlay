@@ -2340,5 +2340,26 @@ tr.samples.extend([(0, 100), (60, -60)])
 check("EXP/hr never shows below zero (a misread's gain taken back can dip it)",
       tr.rate() == 0 and tr.rolling_rate() == 0)
 
+# ---- B11: a settings file saved with a BOM (Notepad), absurd hand-edited numbers
+real_config = m.CONFIG_PATH
+m.CONFIG_PATH = Path(tempfile.mkdtemp()) / "config.json"
+m.CONFIG_PATH.write_text("\ufeff" + json.dumps({"gap_seconds": 20, "ui_scale": 150, "share_health": True}), encoding="utf-8")
+cfg = m.load_config()
+check("settings saved with a BOM in front still load (they don't fall back to the defaults)",
+      (cfg["gap_seconds"], cfg["ui_scale"], cfg.get("share_health")) == (20, 150, True))
+m.CONFIG_PATH.write_text(json.dumps({"pos": [10**30, -10**30], "log_size": [10**9, 10**9], "mesos_box": [10**18] * 6,
+                                     "region": {"left": 0, "top": 0, "width": 10**12, "height": 10**12}, "mode": "region",
+                                     "seen_version": "9" * 10**6}), encoding="utf-8")
+cfg = m.load_config()
+check("absurd positions, sizes and boxes are dropped (a window can't be 10^9 wide)",
+      not any(k in cfg for k in ("pos", "log_size", "mesos_box", "region")) and cfg["mode"] == "window")
+check("an absurdly long version text is dropped", cfg["seen_version"] == "")
+m.CONFIG_PATH.write_text(json.dumps({"pos": [-1800, 40], "log_size": [900, 600], "mesos_box": [1, 2, 3, 4, 5, 6],
+                                     "region": {"left": -1920, "top": 0, "width": 800, "height": 600}, "mode": "region"}), encoding="utf-8")
+cfg = m.load_config()
+check("real positions (even off to the left, on another screen) are kept",
+      cfg["pos"] == [-1800, 40] and cfg["log_size"] == [900, 600] and cfg["region"]["left"] == -1920 and cfg["mode"] == "region")
+m.CONFIG_PATH = real_config
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
