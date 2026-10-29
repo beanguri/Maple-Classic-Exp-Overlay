@@ -289,6 +289,41 @@ if sys.platform == "darwin":
     check("macOS windows can be listed", isinstance(macos.window_list(), list))
 check("release notes are shown as plain text, keeping names like exp_log.txt",
       m._plain_text("**New**\n- **Time** in `exp_log.txt`, see [README](https://x)") == "New\n• Time in exp_log.txt, see README")
+# B06-1: hostile release notes / version names (a broken or tampered GitHub answer) can't freeze or stretch the overlay
+import time as _t
+slow = 0.0
+for hostile in ("[" * 50000, "\n" * 50000, "\r\n" * 25000, "[a](" * 12500):
+    t0 = _t.perf_counter()
+    m._plain_text(hostile)
+    slow = max(slow, _t.perf_counter() - t0)
+check("release notes made of one character repeated 50,000 times are cleaned in well under a second", slow < 1.0)
+check("...and a huge answer is cut before it is cleaned", len(m._plain_text("a" * 10_000_000)) <= 5000)
+
+
+def _update_answer(tag, body="notes"):
+    class Answer:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n=-1): return json.dumps({"tag_name": tag, "body": body}).encode()
+    return lambda *a, **k: Answer()
+
+
+real_urlopen, real_blocked = m.urllib.request.urlopen, m.sharing_blocked
+m.sharing_blocked = lambda: False
+answers = {}
+try:
+    for tag in ("v0.9.99", "v1.0.0-" + "a" * 200000, "v" + "9" * 30 + ".1.1", "v1.0.0-٣٤", "v1.2.3.4", "v1.0.0-beta.2"):
+        m.urllib.request.urlopen = _update_answer(tag)
+        try:
+            answers[tag[:12]] = m.check_for_update()
+        except ValueError:
+            answers[tag[:12]] = "refused"
+finally:
+    m.urllib.request.urlopen, m.sharing_blocked = real_urlopen, real_blocked
+check("an update answer with a normal version is taken", answers["v0.9.99"] and answers["v0.9.99"][0] == "0.9.99")
+check("...a version name of 200,000 characters, a 30-digit number, non-ASCII digits or four parts is refused (it would stretch the window)",
+      all(answers[k] == "refused" for k in ("v1.0.0-aaaaa", "v99999999999", "v1.0.0-٣٤", "v1.2.3.4")))
+check("...a real pre-release name is still taken", answers["v1.0.0-beta."] and answers["v1.0.0-beta."][0] == "1.0.0-beta.2")
 check("how long each line was measured over", [m.fmt_logged(s) for s in (300.4, 1500, 3900)] == ["5 min", "25 min", "1 h 05 min"]
       and [m.fmt_logged(s, short=True) for s in (300.4, 1500, 3900)] == ["5m", "25m", "1h 05m"])
 
@@ -509,6 +544,28 @@ except RuntimeError:
     blocked = True
 m.urllib.request.urlopen = real_urlopen
 check("while testing (MAPLE_EXP_DATA is set) nothing can be sent to the real site", blocked and not sent)
+# B06-2: every sender (runs, health, Send report, update check) refuses while testing, and the runs body is exactly the agreed fields
+sent.clear()
+m.urllib.request.urlopen = capture
+refused = []
+for sender, args in ((m.post_runs, ("0" * 16, log.runs)), (m.post_health, ({},)), (m.post_report, ({"message": "x"},)), (m.check_for_update, ())):
+    try:
+        sender(*args)
+        refused.append(False)
+    except RuntimeError:
+        refused.append(True)
+m.urllib.request.urlopen = real_urlopen
+check("while testing, the run sender, health sender, Send report and update check all refuse and send nothing", all(refused) and not sent)
+sent.clear()
+os.environ["MAPLE_EXP_ALLOW_SHARE"] = "1"
+m.urllib.request.urlopen = capture
+m.post_runs("0" * 16, [dict(r, potions={"Red Potion": 9}, potion_cost=5, note="n", window=True) for r in log.runs])
+m.urllib.request.urlopen = real_urlopen
+os.environ.pop("MAPLE_EXP_ALLOW_SHARE")
+body = json.loads(sent[0][1].decode()) if sent else {}
+check("a shared run carries exactly the agreed fields, and the body only the install ID and the runs",
+      set(body) == {"install", "runs"} and set(body["runs"][0]) == {"date", "started", "map_read", "class", "level_start", "level_end", "party",
+                                                                   "exp", "seconds", "mesos", "mesos_seconds", "version", "seal"})
 check("no test fixture has sharing switched on (a launch on one would send its made-up runs)",
       not any(json.loads(f.read_text(encoding="utf-8")).get("share_runs") for f in (Path(__file__).parent / "upgrade").glob("*/config.json")))
 

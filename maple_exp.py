@@ -391,11 +391,12 @@ def version_key(version):
 
 def _plain_text(markdown):
     """Release notes from GitHub, readable as plain text."""
-    t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", markdown)          # [text](link) -> text
+    # (what GitHub sends is cut and every pattern is bounded first: a huge or odd answer must not hold up the overlay)
+    t = re.sub(r"\[([^\]\n]{1,200})\]\([^)\n]{0,500}\)", r"\1", markdown[:20000])          # [text](link) -> text
     t = re.sub(r"(\*\*|__)(.+?)\1", r"\2", t)                       # **bold** (keeps exp_log.txt)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"^#+\s*", "", t, flags=re.M)
-    t = re.sub(r"^\s*[-*]\s+", "• ", t, flags=re.M)
+    t = re.sub(r"^[ \t]*[-*][ \t]+", "• ", t, flags=re.M)
     t = re.sub(r"\n{3,}", "\n\n", t.replace("\r", ""))
     return t.strip()[:5000]
 
@@ -410,7 +411,7 @@ def check_for_update(timeout=8):
     with urllib.request.urlopen(request, timeout=timeout) as response:
         data = json.loads(response.read(1_000_000).decode("utf-8"))
     tag = str(data.get("tag_name", ""))
-    if not re.fullmatch(r"v?\d+(\.\d+){0,2}(-[\w.]+)?", tag):
+    if not re.fullmatch(r"v?\d{1,4}(\.\d{1,4}){0,2}(-[\w.]{1,20})?", tag, re.ASCII):      # (the name is shown in a window: short)
         raise ValueError(f"unexpected release name {tag[:40]!r}")
     if version_key(tag) <= version_key(VERSION):
         return None
