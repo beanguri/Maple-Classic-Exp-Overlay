@@ -2242,5 +2242,23 @@ except AssertionError:
 m.urllib.request.urlopen = real_urlopen
 check("the update check doesn't go online while MAPLE_EXP_DATA is set", quiet)
 
+# ---- B08: a log saved with a BOM (Notepad), hand-edited potion counts, a misread's gain taken back
+log, path = new_log()
+log._add("Rocky Road II", 27, 1, 1000, 300, 0, 0)
+path.write_text("﻿" + path.read_text(encoding="utf-8"), encoding="utf-8")
+log2 = m.AutoLog(15, path, path.with_suffix(".txt"))
+check("a log with a BOM in front still loads (its lines aren't lost)", len(log2.entries) == 1)
+check("...and no copy was kept as 'damaged'", not list(path.parent.glob("exp_log.damaged-*.json")))
+line = {"date": "2026-10-01", "map": "A", "level": 30, "party": 1, "exp": 5, "seconds": 3, "potion_cost": 5,
+        "potion_seconds": 3}
+check("a potions count that isn't a number leaves the line out", not m.AutoLog._valid(dict(line, potions={"Red": "a"})))
+check("...as does a potions entry that isn't a dict", not m.AutoLog._valid(dict(line, potions="Red")))
+check("potions counts that are numbers are fine", m.AutoLog._valid(dict(line, potions={"Red": 2})))
+tr = m.ExpTracker()
+tr.gained, tr._accum = -160, 120.0
+tr.samples.extend([(0, 100), (60, -60)])
+check("EXP/hr never shows below zero (a misread's gain taken back can dip it)",
+      tr.rate() == 0 and tr.rolling_rate() == 0)
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

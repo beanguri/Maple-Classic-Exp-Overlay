@@ -3045,13 +3045,13 @@ class ExpTracker:
 
     def rate(self):
         t = self.elapsed()
-        return self.gained / t * 3600 if t >= 10 else None
+        return max(0.0, self.gained) / t * 3600 if t >= 10 else None      # (a misread's gain taken back can dip below 0 for a moment)
 
     def rolling_rate(self):
         if len(self.samples) < 2:
             return None
         (t0, g0), (t1, g1) = self.samples[0], self.samples[-1]
-        return (g1 - g0) / (t1 - t0) * 3600 if t1 - t0 >= 30 else None
+        return max(0.0, g1 - g0) / (t1 - t0) * 3600 if t1 - t0 >= 30 else None
 
 
 class MesoTracker:
@@ -3650,7 +3650,7 @@ class AutoLog:
         if not self.path.exists():
             return LOG_VERSION
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(self.path.read_text(encoding="utf-8-sig"))     # (-sig: Notepad can save a BOM in front)
             entries, aliases = data.get("entries", []), data.get("aliases", {})
             runs = data.get("runs", [])
             if not isinstance(entries, list) or not isinstance(aliases, dict) or not isinstance(runs, list):
@@ -3702,7 +3702,8 @@ class AutoLog:
                     and optional("mesos", number) and optional("mesos_seconds", number)
                     and optional("potion_cost", lambda v: number(v) and v >= 0)
                     and optional("potion_seconds", lambda v: number(v) and v >= 0)
-                    and optional("potions", lambda v: isinstance(v, dict))
+                    and optional("potions", lambda v: isinstance(v, dict)
+                                 and all(isinstance(k, str) and number(c) for k, c in v.items()))
                     and optional("estimated", lambda v: type(v) is bool)
                     and (not e.get("mesos_seconds") or number(e.get("mesos"))))
         except Exception:
@@ -4144,7 +4145,7 @@ class AutoLog:
             copy = folder / f"exp_log-{date.today().isoformat()}.json"
             if copy.exists():
                 return
-            data = json.loads(self.path.read_text(encoding="utf-8"))     # (a damaged file has its own copy)
+            data = json.loads(self.path.read_text(encoding="utf-8-sig"))     # (a damaged file has its own copy)
             if not (data.get("entries") or data.get("runs")):
                 return                                                  # nothing in it worth a backup
             folder.mkdir(parents=True, exist_ok=True)
