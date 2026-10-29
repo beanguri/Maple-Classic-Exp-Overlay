@@ -20,6 +20,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 WRANGLER = os.path.join(HERE, "node_modules", "wrangler", "bin", "wrangler.js")
 STATE = os.path.join(HERE, ".wrangler", "test-state")
 CAPS = '{"healthSite":40,"reportSite":7,"purgeEvery":1}'
+BUDGET = ["CACHE_LOCALLY=1", 'BUDGET_TEST={"runsFresh":6,"runsVetted":9,"runsAll":12,"statsMiss":3,"ladderMiss":2,"edgeSeconds":1}']
 BIG = '{"healthSite":100000,"purgeEvery":1000000}'   # test_health_client sends a whole month of days
 
 
@@ -39,12 +40,14 @@ def fresh_db():
         wrangler("d1", "execute", "classicexp", "--local", "--persist-to", ".wrangler/test-state", "--file", schema, "--yes")
 
 
-def start_server(salt, caps):
+def start_server(salt, caps, extra=()):
     cmd = ["node", WRANGLER, "pages", "dev", "public", "--ip", "127.0.0.1", "--port", str(PORT),
            "--inspector-port", str(PORT + 500), "--persist-to", ".wrangler/test-state"]
     if salt:
         cmd += ["--binding", "IP_SALT=local-test"]
     cmd += ["--binding", f"REPORTS_TEST={caps}"]
+    for binding in extra:
+        cmd += ["--binding", binding]
     proc = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(120):
         try:
@@ -70,11 +73,12 @@ def main():
     if not os.path.exists(WRANGLER):
         sys.exit("server/node_modules is missing: run `npm ci` in server/ first")
     runs = [("test_reports.py", [], True, CAPS), ("test_server.py", [], True, CAPS),
-            ("test_reports.py", ["nosalt"], False, CAPS), ("test_health_client.py", [], True, BIG)]
+            ("test_reports.py", ["nosalt"], False, CAPS), ("test_health_client.py", [], True, BIG),
+            ("test_budget.py", [], True, CAPS, BUDGET)]
     failed = []
-    for script, extra, salt, caps in runs:
+    for script, extra, salt, caps, *bindings in runs:
         fresh_db()
-        proc = start_server(salt, caps)
+        proc = start_server(salt, caps, bindings[0] if bindings else ())
         try:
             code = subprocess.run([sys.executable, os.path.join(HERE, script), BASE, *extra]).returncode
         finally:

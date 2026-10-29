@@ -4,7 +4,7 @@
 
 -- One row per shared 15-minute run (1-hour runs from 0.9.3). Nothing that identifies a
 -- player: "install" is a random id made by the overlay, and ip_hash is a code made from the
--- internet address that changes every day (only used to limit how much one connection sends).
+-- internet address that changes every day (only used to limit how much one connection sends; blanked to '' after 2 days).
 CREATE TABLE IF NOT EXISTS runs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   received      TEXT    NOT NULL,          -- when the server got it (UTC)
@@ -31,6 +31,8 @@ CREATE INDEX IF NOT EXISTS runs_by_install  ON runs (install, started);
 CREATE INDEX IF NOT EXISTS runs_by_ip       ON runs (ip_hash, received_day);
 CREATE INDEX IF NOT EXISTS runs_by_received ON runs (received, started);
 CREATE INDEX IF NOT EXISTS runs_by_map      ON runs (map, level_start);
+-- Only rows whose ip_hash is still there: lets the purge find the ones old enough to blank without reading every run.
+CREATE INDEX IF NOT EXISTS runs_unblanked   ON runs (received) WHERE ip_hash != '';
 CREATE INDEX IF NOT EXISTS runs_by_job_level ON runs (job, level_start);   -- the best-maps query: a class's jobs in a few levels
 
 -- Small summary tables, kept up to date as runs come in, so the site never has to read

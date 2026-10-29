@@ -11,6 +11,8 @@
 const DAY = 86400000;
 const KEEP_REPORTS_DAYS = 90;
 const KEEP_LIMITS_DAYS = 3;
+const KEEP_IP_DAYS = 2;
+const BLANK_PER_PURGE = 5000;
 const CAPS = { healthConn: 3, healthSite: 5000, reportId: 3, reportConn: 3, reportSite: 200, purgeEvery: 100 };
 
 const HEALTH_MAX_BYTES = 4096;
@@ -184,7 +186,8 @@ export async function handleReports(request, env, now, url, tools) {
   return answer;
 }
 
-/** Old rows go: reports after 90 days, the daily counters after 3. */
+/** Old rows go: reports after 90 days, the daily counters after 3. The runs' connection codes are blanked after
+ * KEEP_IP_DAYS (the per-connection limits only look at today), a few thousand per purge so one never takes long. */
 function purgeStatements(env, now) {
   const reports = new Date(now - KEEP_REPORTS_DAYS * DAY).toISOString();
   const limits = new Date(now - KEEP_LIMITS_DAYS * DAY).toISOString().slice(0, 10);
@@ -192,6 +195,8 @@ function purgeStatements(env, now) {
     env.DB.prepare("DELETE FROM health_reports WHERE received < ?1").bind(reports),
     env.DB.prepare("DELETE FROM user_reports WHERE received < ?1").bind(reports),
     env.DB.prepare("DELETE FROM limits WHERE day < ?1").bind(limits),
+    env.DB.prepare("UPDATE runs SET ip_hash = '' WHERE id IN (SELECT id FROM runs WHERE ip_hash != '' AND received < ?1 LIMIT ?2)")
+      .bind(new Date(now - KEEP_IP_DAYS * DAY).toISOString(), BLANK_PER_PURGE),
   ];
 }
 

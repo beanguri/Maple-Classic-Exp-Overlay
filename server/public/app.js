@@ -210,6 +210,7 @@ async function ask(event, scroll = !!event) {
   try {
     const query = new URLSearchParams({ class: job, ...(path ? { path } : {}), level, party, ...(view.withNew ? { new: "1" } : {}) });
     data = await getJson(`/api/stats?${query}`);
+    if (data.busy) { $("results").innerHTML = `<div class="note">Lots of people are asking right now. Try again in a few minutes.</div>`; return; }
     if (data.error) throw new Error(data.error);
   } catch {
     $("results").innerHTML = `<div class="note">Couldn't load the maps. Try again in a moment.</div>`;
@@ -459,6 +460,7 @@ async function showLadder(job, path, level, party, scroll) {
   try {
     const query = new URLSearchParams({ class: job, ...(path ? { path } : {}), party, ...(view.withNew ? { new: "1" } : {}) });
     data = await getJson(`/api/ladder?${query}`);
+    if (data.busy) { $("results").innerHTML = `<div class="note">Lots of people are asking right now. Try again in a few minutes.</div>`; return; }
     if (data.error) throw new Error(data.error);
   } catch {
     $("results").innerHTML = `<div class="note">Couldn't load the ladder. Try again in a moment.</div>`;
