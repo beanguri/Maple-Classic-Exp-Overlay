@@ -53,7 +53,7 @@ function fromLink(q = new URLSearchParams(location.search)) {
   }
   const asked = q.get("path");
   if (out.job && asked && classes.find((c) => c.name === out.job)?.paths.some((p) => p.name === asked)) out.path = asked;
-  if (SORTS[q.get("sort")]) out.sort = q.get("sort");
+  if (Object.hasOwn(SORTS, q.get("sort"))) out.sort = q.get("sort");
   if (q.get("hide") === "early") out.showEarly = false;      // (links from when early data showed by default)
   if (q.get("early") === "1") out.showEarly = true;
   if (q.get("view") === "ladder") out.view = "ladder";
@@ -118,7 +118,7 @@ async function loadOptions() {
     `<span>${esc(c.name)}</span></label>`).join("");
   const link = fromLink(), linked = Object.keys(link).length > 0;
   const last = { ...saved(), ...link };
-  if (SORTS[last.sort]) view.sort = last.sort;
+  if (Object.hasOwn(SORTS, last.sort)) view.sort = last.sort;
   view.hideEarly = !last.showEarly;          // (the old "hide" setting is ignored: hidden is the new default)
   view.withNew = !!last.withNew;
   view.tab = link.view === "ladder" ? "ladder" : "maps";

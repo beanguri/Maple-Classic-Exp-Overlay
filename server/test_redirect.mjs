@@ -28,5 +28,18 @@ check("the redirect never goes anywhere but the new site (path can't change the 
       movedTo(at("maple-classic-exp-overlay.pages.dev", "//evil.com/x")).startsWith("https://mcwo.app//evil.com") === true);
 check("the API address isn't touched by this file (the page only moves the page)", !/api\/runs/.test(source.slice(start, end)));
 
+// Choices from a link or the browser's saved settings: a name every object has ("constructor") is not a sort (B05-4).
+const sortsAt = source.indexOf("const SORTS = {"), sortsEnd = source.indexOf("};", sortsAt) + 2;
+const helperAt = source.indexOf("const soloOrParty"), helperEnd = source.indexOf("const plural");
+const linkAt = source.indexOf("function fromLink"), linkEnd = source.indexOf("function chosenClass");
+if (sortsAt < 0 || helperAt < 0 || linkAt < 0) throw new Error("fromLink or SORTS moved in app.js");
+const fromLink = vm.runInNewContext("let classes = [];\n" + source.slice(sortsAt, sortsEnd) + source.slice(helperAt, helperEnd) +
+  source.slice(linkAt, linkEnd) + "; fromLink");
+const sortOf = (v) => fromLink(new URLSearchParams({ sort: v })).sort;
+check("a real sort in a link is kept", sortOf("mesos") === "mesos" && sortOf("exp") === "exp");
+check("...but names every object has (constructor, __proto__, toString) are not sorts",
+      sortOf("constructor") === undefined && sortOf("__proto__") === undefined && sortOf("toString") === undefined);
+check("the saved sort is checked the same way", /Object\.hasOwn\(SORTS, last\.sort\)/.test(source));
+
 console.log(failures ? `\n${failures} FAILED` : "\nALL PASSED");
 process.exit(failures ? 1 : 0);
