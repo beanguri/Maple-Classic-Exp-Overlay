@@ -419,8 +419,19 @@ class Details(tk.Canvas):
                 self.create_line(g.px(14), g.px(7 + i * self.ROW), g.px(INNER - 14), g.px(7 + i * self.ROW), fill="#232733")
 
     def set(self, name, value):
+        value = self._fit(name, value)
         if self.itemcget(self._vals[name], "text") != value:
             self.itemconfigure(self._vals[name], text=value)
+
+    def _fit(self, name, value):
+        """The value cut with an ellipsis so it never runs into its label."""
+        g, font = self.t.gfx, self.t.font("bold", 12.5)
+        room = g.px(INNER - 32) - self.t.font("regular", 12).measure(name) - g.px(12)
+        if font.measure(value) <= room:
+            return value
+        while value and font.measure(value + "…") > room:
+            value = value[:-1]
+        return value + "…"
 
 
 class Toggle(tk.Canvas):
