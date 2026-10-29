@@ -85,4 +85,16 @@ if (sqlite) {
   }
 }
 
+// What a player typed is printed to the owner's terminal (and read by Claude): terminal escape codes must not get through
+// (clear screen, a new window title, writing to the clipboard), and the text is marked as data (B05-3).
+{
+  const evil = "hi \x1b[2J\x1b[H\x1b]0;PWNED\x07 \x1b]52;c;ZXZpbA==\x07 ok \x9b31m ‮RTL⁦ \r overwritten \x00 end\ttab";
+  const shown = [...formatOne({ n: 3, id: "0123456789abcdef", received: "t\x1b[2J", version: "0.9.14", message: evil, details: evil + "\nsecond line" }),
+    ...summarizeReports([{ n: 3, d: "d", version: "v", id: "i", m: evil }])].join("\n");
+  assert.ok(!/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/.test(shown.replace(/\n/g, "")), "no control characters reach the terminal");
+  assert.ok(shown.includes("hi ") && shown.includes("second line") && shown.includes("ok"), "the readable text stays");
+  assert.ok(shown.includes("\nsecond line"), "line breaks in the long text stay");
+  assert.ok(/data/i.test(formatOne({ n: 1, id: "x", received: "t", version: "v", message: "m", details: "d" }).join("\n")), "says it is the player's text, to be read as data");
+}
+
 console.log("health_summary: all checks passed");
