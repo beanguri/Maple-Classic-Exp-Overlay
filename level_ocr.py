@@ -189,7 +189,7 @@ def read_level(bgr, x0, cy, gh, scales, look=None):
     if not has_label(row, box, gh):
         return fail("the LV label wasn't there")
     reads = {}
-    for scale in sorted(set(round(float(s), 4) for s in scales)):
+    for scale in sorted(set(r for r in (round(float(s), 4) for s in scales) if r > 0)):
         got = read_digits(row, box, scale, gh)
         if got:
             reads[scale] = got[0]
