@@ -2038,28 +2038,30 @@ class ScreenReader:
 
     def diagnostics(self):
         """What this reader knows about where things are, for bug reports (a plain dict)."""
-        rect, g = self.last_rect, self.gh
+        # (each field read once: the reading thread may set any of them to None while this runs on the main thread)
+        rect, g, box, mesos_box, map_box = self.last_rect, self.gh, self.box, self.mesos_box, self.map_box
+        party_area, anchor = self.party_area, self.exp_anchor
         covering = []
         if rect and g:
             wx, wy = rect[0], rect[1]
-            if self.box and self._covered(wx + self.box[0], wy + self.box[1], self.box[2], self.box[3]):
+            if box and self._covered(wx + box[0], wy + box[1], box[2], box[3]):
                 covering.append("EXP bar")
-            if self.mesos_box and self._covered(wx + self.mesos_box[0], wy + self.mesos_box[1], self.mesos_box[2],
-                                                self.mesos_box[3], margin=max(2, int(0.3 * self.mesos_box[3]))):
+            if mesos_box and self._covered(wx + mesos_box[0], wy + mesos_box[1], mesos_box[2],
+                                           mesos_box[3], margin=max(2, int(0.3 * mesos_box[3]))):
                 covering.append("mesos box")
-            if self.map_box and self._covered(wx + self.map_box[0], wy + self.map_box[1], self.map_box[2], self.map_box[3]):
+            if map_box and self._covered(wx + map_box[0], wy + map_box[1], map_box[2], map_box[3]):
                 covering.append("minimap name")
-            if self.party_area and self._covered(*self.party_area):
+            if party_area and self._covered(*party_area):
                 covering.append("party list")
-            if self.exp_anchor:
-                ax, ay = self.exp_anchor
+            if anchor:
+                ax, ay = anchor
                 if self._covered(wx + int(ax - 65 * g), wy + int(ay - 3 * g), int(46 * g), int(6.5 * g)):
                     covering.append("class name")
         return dict(mode=self.mode, found=bool(self.hwnd), rect=rect, gh=g, region=self.region, capture=self.capture.name,
-                    own_rect=self.own_rect, covering=covering, exp_box=self.box, exp_misses=self.misses,
-                    map_box=self.map_box, map_unread=self.map_unread, mesos_box=self.mesos_box,
+                    own_rect=self.own_rect, covering=covering, exp_box=box, exp_misses=self.misses,
+                    map_box=map_box, map_unread=self.map_unread, mesos_box=mesos_box,
                     mesos_fails=self.mesos_fails, two_boxes=self.two_boxes, mesos_learned=self.mesos_digits.complete,
-                    party_area=self.party_area, job_why=(self.job_look or {}).get("why") or "",
+                    party_area=party_area, job_why=(self.job_look or {}).get("why") or "",
                     part_errors=dict(self.part_errors), error_types=dict(self.error_types))
 
     def _read_job(self, capture, rect):
