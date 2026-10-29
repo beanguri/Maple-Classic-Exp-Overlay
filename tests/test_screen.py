@@ -675,6 +675,19 @@ if m.tesseract_ok:
 else:
     print("     (Tesseract isn't installed: class reading not tested)")
 
+# ---- the class picture in a bug report must not show the character name (the line under the class)
+_g, _cy = 11, 150
+_scene = np.full((300, 900, 3), 20, np.uint8)
+_scene[int(_cy + 0.9 * _g):int(_cy + 2.6 * _g), 100:250] = 255          # the name row, as _look_at_name finds it
+_scene[int(_cy - 0.5 * _g):int(_cy + 0.9 * _g) - 3, 100:250] = 200      # the class line above it
+_look = {}
+m.read_job(_scene, 600, _cy, _g, _look)
+_shown = m.hide_name_row(_look)
+_top = int(_cy + 0.9 * _g) - 2 - max(0, int(_cy - 2.5 * _g))
+check("bug report class picture: nothing of the name row is left", _shown.shape == _look["image"].shape and int(_shown[_top:].max()) == 0)
+check("...and the class line above it is kept", int(_shown[:_top].max()) == 200 and _look["image"].max() == 255)
+check("...a look with no picture stays none", m.hide_name_row({"image": None}) is None and m.hide_name_row({}) is None)
+
 # ---- an EXP bar that shows only a percentage ("EXP. [58.47%]" past about a million EXP)
 from pics import percent_only  # noqa: E402
 for f in sorted(FRAMES.glob("exp_*.png")):
