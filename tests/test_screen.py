@@ -1992,6 +1992,22 @@ alive, kinds, polls, still = run_worker(flaky_open, OneLook())
 check("the reading thread tries again when the screen can't be opened, and then reads", alive and len(tries) >= 3 and polls >= 1)
 check("...the player is told meanwhile (an error reaches the window) and the thread ends when asked",
       "error" in kinds and "reading" in kinds and not still)
+opened = []
+
+
+def counting_open():
+    opened.append(1)
+    return GoodScreen()
+
+
+real_poll, real_list = m.POLL_SECONDS, m.SCREEN_LIST_SECONDS
+m.POLL_SECONDS, m.SCREEN_LIST_SECONDS = 0.1, 0.3
+try:
+    alive, kinds, polls, still = run_worker(counting_open, OneLook())
+finally:
+    m.POLL_SECONDS, m.SCREEN_LIST_SECONDS = real_poll, real_list
+check("the screen is opened again now and then (a monitor plugged in or out while reading is seen), the reading goes on",
+      len(opened) >= 3 and polls >= 5 and alive and "error" not in kinds and not still)
 
 
 # the small UI (UI Size "Ideal", or a small window) on a very wide screen: the text is far under 0.3% of the strip,

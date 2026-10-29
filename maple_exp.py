@@ -93,6 +93,7 @@ TEMPLATE_PATH = ASSETS / "digits.npz"
 ICON_PATH = ASSETS / "icon.ico"
 POLL_SECONDS = 1.5          # how often to read the EXP bar
 WORKER_RETRY_SECONDS = 5       # if the reading thread can't open the screen: how long to wait before trying again
+SCREEN_LIST_SECONDS = 60       # the reading thread opens the screen again this often (to see monitors added or removed)
 ROLLING_WINDOW = 300        # seconds used for the "last 5 min" rate
 MESO_GAP = 120              # seconds without a mesos look after which a rise is believed, however big
 SEARCH_STRIP = 0.22         # bottom part of the game window searched for the EXP text
@@ -2442,7 +2443,8 @@ class ScreenReader:
                         self.window_box = bool(window)
                     if window == "trade" or self.two_boxes:
                         self._v2_mesos_skipped()                    # (whose box it is can't be told: v2 doesn't guess either)
-                    elif field is None:                             # today's reader found no box: v2 looks on its own
+                    elif field is None and not self.mesos_box:      # today's reader found no box: v2 looks on its own
+                        # (with a box remembered from before, the box read below compares the two this look: once)
                         self.shadow_part("mesos", None, 0.0, lambda: self._v2_mesos(img, wh), searching=True)
                     area = self.party_area
                     if area and self._blocked(*area):
@@ -5306,7 +5308,10 @@ class App:
             try:
                 with mss.mss() as sct:
                     capture = ScreenCapture(sct)
-                    while not self.stop_evt.is_set():
+                    opened = time.monotonic()
+                    # (opened again every SCREEN_LIST_SECONDS: mss keeps the list of screens it first saw, so a monitor
+                    # plugged in or out, or a new resolution, would leave the game "off screen" until a restart)
+                    while not self.stop_evt.is_set() and time.monotonic() - opened < SCREEN_LIST_SECONDS:
                         t0 = time.monotonic()
                         try:
                             reading = self.reader.read(capture)
