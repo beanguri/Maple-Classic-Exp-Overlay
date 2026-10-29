@@ -246,7 +246,8 @@ class HealthLog:
         out["tracking"] = float(num(rec.get("tracking")))
         out["ms_total"], out["ms_n"] = float(num(rec.get("ms_total"))), int(num(rec.get("ms_n")))
         if isinstance(rec.get("hist"), dict):
-            out["hist"] = {str(k): int(num(v)) for k, v in rec["hist"].items() if str(k).isdigit()}
+            out["hist"] = {str(k): int(num(v)) for k, v in rec["hist"].items()
+                           if str(k).isdigit() and len(str(k)) <= 4 and int(k) <= MAX_BUCKET}     # (only the buckets look() makes)
         if isinstance(rec.get("games"), dict):
             out["games"] = {str(k): int(num(v)) for k, v in list(rec["games"].items())[:12]}
         out["snap"] = HealthLog._clean_snap(rec.get("snap"))
@@ -438,6 +439,9 @@ class HealthLog:
         """(day, body) of the oldest finished day to send now, or None. Sends at most one a hour, and not
         before `retry_after`. Days with nothing to send or older than SEND_DAYS are marked done on the way."""
         now = self.clock()
+        # (a time saved while the PC's clock was ahead must not block sending for years once the clock is right again:
+        # 'later' never waits past the next UTC midnight, and an attempt is never in the future)
+        self.last_attempt, self.retry_after = min(self.last_attempt, now), min(self.retry_after, (now // 86400 + 1) * 86400)
         if now - self.last_attempt < SEND_EVERY or now < self.retry_after:
             return None
         today = utc_day(now)
