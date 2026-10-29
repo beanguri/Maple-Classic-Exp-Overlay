@@ -697,6 +697,92 @@ looks(t, 400000, 5)
 check("a big jump seen at once (inventory open all the time) is still a shop visit",
       t.value == 400000 and t.gained == 0)
 
+t = m.MesoTracker()
+looks(t, 100000, 0)
+looks(t, 400000, m.MESO_GAP + 1)
+check("a big rise after the inventory was closed briefly is earned (not a shop visit)",
+      t.value == 400000 and t.gained == 300000)
+t = m.MesoTracker()
+looks(t, 100000, 0)
+looks(t, 400000, max(1, m.MESO_GAP - 1))
+check("a big jump just before that wait is still a shop visit",
+      t.value == 400000 and t.gained == 0)
+
+# ---- mesos box remembered across window sizes, and scaled on a resize
+check("scale_box moves a mesos box from 1024x768 to 2560x1440",
+      m.scale_box((801, 473, 143, 14), (1024, 768), (2560, 1440)) == (2002, 887, 358, 26))
+check("scale_box leaves bad sizes alone", m.scale_box((10, 10, 20, 12), (0, 768), (2560, 1440)) is None)
+check("fmt_ago: under 3 s is 'just now'", m.fmt_ago(1.2) == "just now")
+check("fmt_ago: seconds and minutes", m.fmt_ago(12) == "12s ago" and m.fmt_ago(125) == "2m ago")
+rows = m.feature_read_status(
+    exp={"ok": True}, mesos={"value": 100000, "seen_at": 1000}, map_name={"name": "Rocky Road II"},
+    potions={"on": True, "ok": True}, now=1005)
+check("feature_read_status: all green when everything is fresh",
+      [r[1] for r in rows] == ["ok", "ok", "ok", "ok"])
+rows = m.feature_read_status(
+    exp={"looking": True}, mesos={"value": None}, map_name={}, potions={"on": False}, now=0)
+check("feature_read_status: waiting / off when nothing is ready",
+      [r[1] for r in rows] == ["wait", "wait", "wait", "off"])
+rows = m.feature_read_status(
+    exp={"ok": True}, mesos={"value": 100000, "seen_at": 0}, map_name={"name": "X"},
+    potions={"on": True, "looking": True}, now=m.MESO_STALE_SECONDS + 5)
+check("feature_read_status: mesos go stale after a minute closed",
+      dict(r[:2] for r in rows)["Mesos"] == "stale")
+check("good_mesos_boxes accepts a few WxH keys",
+      m.good_mesos_boxes({"1024x768": [801, 473, 143, 14], "2560x1440": [2000, 880, 350, 26]}))
+check("good_mesos_boxes rejects a bad key", not m.good_mesos_boxes({"1024": [1, 2, 3, 4]}))
+
+m.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+m.CONFIG_PATH.write_text(json.dumps({
+    "mesos_box": [1024, 768, 801, 473, 143, 14],
+    "mesos_boxes": {"2560x1440": [2000, 880, 350, 26]},
+}), encoding="utf-8")
+cfg = m.load_config()
+check("load_config keeps legacy mesos_box and mesos_boxes together",
+      cfg["mesos_box"] == [1024, 768, 801, 473, 143, 14]
+      and cfg["mesos_boxes"] == {"2560x1440": [2000, 880, 350, 26]})
+
+# A ScreenReader remaps the mesos and EXP boxes when the game window changes size.
+class FakePlatform:
+    def __init__(self):
+        self.rect = (0, 0, 1024, 768)
+    def window_exists(self, hwnd):
+        return True
+    def client_rect(self, hwnd):
+        return self.rect
+    def find_game_window(self):
+        return 1
+
+fake = FakePlatform()
+old_plat = m.PLATFORM
+m.PLATFORM = fake
+try:
+    reader = m.ScreenReader(None)
+    reader.hwnd = 1
+    reader.size = (1024, 768)
+    reader.mesos_box = (801, 473, 143, 14)
+    reader.box = (400, 720, 200, 30)
+    reader.saved_mesos_boxes = {"2560x1440": (2000, 880, 350, 26)}
+    fake.rect = (0, 0, 2560, 1440)
+    got = reader._game_rect()
+    check("resize to a remembered size restores that mesos box",
+          got == fake.rect and reader.mesos_box == (2000, 880, 350, 26)
+          and reader.mesos_provisional is False
+          and reader.box == m.scale_box((400, 720, 200, 30), (1024, 768), (2560, 1440)))
+    fake.rect = (0, 0, 1920, 1080)
+    reader.size = (2560, 1440)
+    reader.mesos_box = (2000, 880, 350, 26)
+    reader.box = (1000, 1350, 500, 56)
+    reader.saved_mesos_boxes = {"2560x1440": (2000, 880, 350, 26)}
+    got = reader._game_rect()
+    check("resize to an unknown size scales the last mesos and EXP boxes provisionally",
+          got == fake.rect
+          and reader.mesos_box == m.scale_box((2000, 880, 350, 26), (2560, 1440), (1920, 1080))
+          and reader.mesos_provisional is True
+          and reader.box == m.scale_box((1000, 1350, 500, 56), (2560, 1440), (1920, 1080)))
+finally:
+    m.PLATFORM = old_plat
+
 # ---- mesos moved at a shop, storage or trade window aren't earned: the change between the
 # window opening and closing is left out, in both directions
 def at_window(kind, start, steps):
@@ -1298,6 +1384,28 @@ check(f"no EXP for 15 s pauses by itself, without counting the idle time "
 gains(s, 3.5)
 check(f"the next EXP gain carries on (the gain that restarts it isn't counted: {s.exp.gained})",
       s.waiting is None and s.exp.running and s.exp.gained == 1000)
+# a long AFK pause: next resume is a fresh run (totals from zero)
+gained = s.exp.gained
+idle(s, 40)
+check("still idle after another short gap", s.waiting == "idle")
+s.paused_at = clock[0] - m.PAUSE_RESTART_SECONDS - 1
+before = s.exp.gained
+gains(s, 3.5)
+check(f"paused over 10 min: resume starts a new run (was {before}, now {s.exp.gained})",
+      s.waiting is None and s.exp.running and s.exp.gained == 0 and s.fresh_restart is True
+      and s.meso.gained == 0)
+s.fresh_restart = False
+# manual Pause for a long time, then Start: also a new run
+gains(s, 12)
+looks_at(180000)
+s.pause(clock[0])
+s.paused_at = clock[0] - m.PAUSE_RESTART_SECONDS - 5
+clock[0] += 1
+check("should_fresh_run after a long manual pause", s.should_fresh_run(clock[0]))
+s.begin_fresh_run()
+s.start(clock[0])
+check("long manual pause + Start clears totals for a new run",
+      s.exp.gained == 0 and s.exp.running and s.paused_at is None)
 gained = s.exp.gained
 s.map_seen("The Swamp of Despair I")
 check("leaving the map pauses by itself", s.waiting == "map" and not s.exp.running)

@@ -48,7 +48,7 @@ You need Windows 10 or 11. It takes about 2 minutes, and you don't need to insta
 4. **Press Start** and play normally. You only need to press it once:
    - It **pauses by itself** when you get no EXP for 15 seconds or leave the map, and carries on at your next EXP gain. Paused time doesn't count, so EXP/hr only covers your farming.
    - On a different map, the numbers start from zero for that map.
-5. **Want mesos tracked?** Open your inventory (any tab) when you start, and now and then while you play. It doesn't have to stay open. If the overlay asks you to open it, do. Mesos you spend or move at a shop, storage or trade are left out, so only mesos you pick up count.
+5. **Want mesos tracked?** Open your inventory (any tab) when you start, and now and then while you play. It doesn't have to stay open: it remembers the last amount and updates mesos/hr the next time you open it. If the overlay asks you to open it, do. Mesos you spend or move at a shop, storage or trade are left out, so only mesos you pick up count. If you resize the game window, it remaps the mesos and EXP spots to the new size.
 6. **Want net mesos?** Keep the potions you use on the quick-slot bar. See [Net mesos and potions](#net-mesos-and-potions).
 
 Within a few seconds it shows your level and how much EXP you have. The per-hour numbers fill in once you've gained a little EXP.
@@ -100,6 +100,7 @@ Click the **log icon** (top left, next to the status pill) to open the log. It's
 - **15-minute runs:** under the log it also counts toward 15 minutes of non-stop farming on one map with the same party size ("15-min run: 7 of 15 min"). A level-up doesn't stop it; a break, a new map or a new party size starts it over. Finished runs are saved separately and, if you said yes, shared with the [best-maps site](#best-maps-for-your-class) (only clean ones, see there).
 - **Greyed-out lines** were changed outside the overlay. Every line the overlay writes is sealed, so a line edited or added by hand is easy to spot, and it won't count toward the best-maps site. Deleting a line, or renaming a map in the overlay, is fine.
 - **Taking a break restarts the 5-minute timer.** A break means no EXP for 15 seconds (you can change this in ⚙). Changing maps or party size restarts it too.
+- **Paused over 10 minutes?** The next time you resume (or EXP starts again after an idle pause), it starts a **new run** with totals from zero, so an AFK break doesn’t glue onto the old session.
 - **Don't want a run logged?** Turn off **Log this run**. It switches back on its own when that run ends.
 - **Solo** means just you. **4ppl** means a party of 4.
 - **?** under Mesos/hr means your inventory wasn't looked at.
@@ -249,7 +250,7 @@ Free code signing from [SignPath Foundation](https://signpath.org) is planned, s
 - Approvers: [beanguri](https://github.com/beanguri)
 - Privacy policy: see [Privacy](#privacy) above. In short: your log and notes stay on your PC, and the overlay only sends anything to another system if you turn on sharing your finished 15-minute runs or the daily health report (both off until you say yes, and you can turn them off any time in Settings), if you click **Send to the developer** on a bug report, or to check GitHub for a newer version (can be turned off too).
 
-**Credits:** the list of the game's map names (`assets/maps.txt`) comes from [meowdb.com](https://meowdb.com/msclassic/maps/all), a fan-made MapleStory Classic database (thank you). The typeface is [Manrope](https://github.com/googlefonts/manrope) (SIL Open Font License, included as `assets/fonts/OFL.txt`).
+**Credits:** the list of the game's map names (`assets/maps.txt`) comes from [meowdb.com](https://meowdb.com/msclassic/maps/all), a fan-made MapleStory Classic database (thank you). Etc and potion/food NPC sell-back prices (`assets/loot_prices.json`) are synced from the same site's [item database](https://meowdb.com/msclassic/item-db). The typeface is [Manrope](https://github.com/googlefonts/manrope) (SIL Open Font License, included as `assets/fonts/OFL.txt`).
 
 ## Updates
 

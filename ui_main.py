@@ -17,9 +17,12 @@ SHAPES = ("square", "wide", "bar")
 SHAPE_W = {"square": W, "wide": 560, "bar": 720}
 
 # state -> (dot colour, glows)
-STRIP_KEYS = ("rate", "pct", "level", "eta", "eta_time", "mesos", "net", "tiles", "state", "state_text", "message")
+STRIP_KEYS = ("rate", "pct", "level", "eta", "eta_time", "mesos", "net", "tiles", "state", "state_text",
+              "message", "read_health", "read_health_on")
 STATES = {"waiting": ("#6c7280", False), "ready": ("#ffcf4a", False), "tracking": ("#5fe39a", True),
           "paused": ("#ffb27a", False), "alert": ("#ff7a5c", True)}
+# How well a feature can be read: coloured dots on the readability strip.
+READ_STATES = {"ok": "#5fe39a", "stale": "#ffcf4a", "bad": "#ff7a5c", "wait": "#6c7280", "off": "#3a3f4d"}
 
 
 MIN_TEXT_PX = 8                          # the smallest text, at any Size, so it stays readable
@@ -369,6 +372,91 @@ class Hero(tk.Canvas):
 TILE_SHORT = {"Last 5 min": "5 min", "Mesos / hr": "Mesos", "Net / hr": "Net"}      # for tiles too narrow for the full label
 
 
+class ReadHealth(tk.Canvas):
+    """A row of dots: EXP / Mesos / Map / Potions — green when readable, yellow when holding,
+    red when failing. Toggleable in Settings. items is [(label, state, tip), ...]."""
+
+    H = 28
+
+    def __init__(self, parent, theme, width, bg=INK):
+        self.t, self.bw = theme, width
+        g = theme.gfx
+        super().__init__(parent, width=g.px(width), height=g.px(self.H), bg=bg, highlightthickness=0, bd=0)
+        self._last, self._photos, self._tips = None, [], []
+        self._tip_win, self._tip_job, self._tip_text = None, None, None
+        self.bind("<Motion>", self._hover)
+        self.bind("<Leave>", lambda e: self._hide_tip())
+
+    def set(self, items):
+        items = tuple((lab, st, tip) for lab, st, tip in (items or ()))
+        if items == self._last:
+            return
+        self._last = items
+        self.delete("all")
+        self._photos, self._tips = [], []
+        if not items:
+            return
+        g = self.t.gfx
+        x, gap = g.px(2), g.px(14)
+        for label, state, tip in items:
+            color = READ_STATES.get(state, READ_STATES["wait"])
+            d = max(3, g.px(4))
+            dot = Image.new("RGBA", (d * 3, d * 3), (0, 0, 0, 0))
+            if state == "ok":
+                try:
+                    dot.alpha_composite(g.glow(d, d, d / g.s / 2, color, 2.5, 0.45, d))
+                except Exception:
+                    pass
+            ImageDraw.Draw(dot).ellipse((d, d, 2 * d - 1, 2 * d - 1), fill=rgb(color) + (255,))
+            photo = g.photo(dot)
+            self._photos.append(photo)
+            self.create_image(x, g.px(self.H / 2) - d * 1.5, anchor="nw", image=photo)
+            x0 = x
+            x += d * 2 + g.px(5)
+            tid = self.create_text(x, g.px(self.H / 2), anchor="w", text=label,
+                                   fill=TEXT_DIM if state in ("off", "wait") else TEXT,
+                                   font=self.t.font("semibold", 10))
+            box = self.bbox(tid)
+            x1 = box[2] if box else x + g.px(40)
+            self._tips.append((x0, x1, tip))
+            x = x1 + gap
+
+    def _hover(self, e):
+        for x0, x1, tip in self._tips:
+            if x0 <= e.x <= x1:
+                self._schedule_tip(tip)
+                return
+        self._hide_tip()
+
+    def _schedule_tip(self, text):
+        if text == self._tip_text and self._tip_win is not None:
+            return
+        self._hide_tip()
+        self._tip_text = text
+        self._tip_job = self.after(400, lambda: self._show_tip(text))
+
+    def _show_tip(self, text):
+        self._tip_job = None
+        if not text or not self.winfo_exists():
+            return
+        win = self._tip_win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        tk.Label(win, text=text, bg="#242833", fg=TEXT, font=self.t.font("semibold", 11),
+                 padx=10, pady=5, wraplength=self.t.px(280), justify="left",
+                 highlightthickness=1, highlightbackground="#343a48").pack()
+        win.geometry(f"+{self.winfo_rootx()}+{self.winfo_rooty() + self.winfo_height() + 6}")
+
+    def _hide_tip(self):
+        if self._tip_job:
+            self.after_cancel(self._tip_job)
+            self._tip_job = None
+        self._tip_text = None
+        if self._tip_win is not None:
+            self._tip_win.destroy()
+            self._tip_win = None
+
+
 class Tile(tk.Canvas):
     """A small panel with one number."""
 
@@ -709,8 +797,12 @@ class MainView(tk.Frame):
         self.hero.grid(row=1, column=0, padx=g.px(SIDE), pady=pad(0, 10))
         self.hero.bind("<Double-Button-1>", lambda e: cb["compact"]())
 
+        self.read_health = ReadHealth(self, theme, INNER, bg)
+        self.read_health.grid(row=2, column=0, padx=g.px(SIDE), pady=pad(0, 8), sticky="we")
+        self._read_health_on = True
+
         self.tiles_row = tk.Frame(self, bg=bg)
-        self.tiles_row.grid(row=2, column=0, padx=g.px(SIDE), pady=pad(0, 6), sticky="we")
+        self.tiles_row.grid(row=3, column=0, padx=g.px(SIDE), pady=pad(0, 6), sticky="we")
         tw = (INNER - 24) // 4
         self.tiles = {}
         for i, name in enumerate(("Last 5 min", "Mesos / hr", "Net / hr", "Elapsed")):
@@ -720,16 +812,17 @@ class MainView(tk.Frame):
 
         self.more_btn = Button(self, theme, text="Details", icon="down", kind="ghost", width=INNER, height=30, radius=10,
                                size=12, weight="semibold", command=self._toggle_details, bg=bg)
-        self.more_btn.grid(row=3, column=0, padx=g.px(SIDE), pady=pad(0, 4))
+        self.more_btn.grid(row=4, column=0, padx=g.px(SIDE), pady=pad(0, 4))
         self.details_open = details
-        self.details = Details(self, theme, ("% / hr", "Gained", "Current", "Mesos", "Mesos / 5 min", "Potion cost", "Net mesos / hr", "Left out"), bg)
-        self.details.grid(row=4, column=0, padx=g.px(SIDE), pady=pad(0, 8))
+        self.details = Details(self, theme, ("% / hr", "Gained", "Current", "Class", "Party", "Mesos", "Mesos / 5 min",
+                                             "Etc gain", "Potion gain", "Potion cost", "Net mesos / hr", "Left out"), bg)
+        self.details.grid(row=5, column=0, padx=g.px(SIDE), pady=pad(0, 8))
         if not details:
             self.details.grid_remove()
         self.more_btn.set(icon="up" if details else "down")
 
         controls = self.controls = tk.Frame(self, bg=bg)
-        controls.grid(row=5, column=0, padx=g.px(SIDE - 8), pady=pad(0, 2), sticky="we")
+        controls.grid(row=6, column=0, padx=g.px(SIDE - 8), pady=pad(0, 2), sticky="we")
         controls.columnconfigure(0, weight=1)
         self.start_btn = Button(controls, theme, text="Start", icon="play", kind="primary", width=INNER - 8 - 52 - 52, height=46,
                                 radius=14, size=14, weight="bold", command=cb["start"], bg=bg)
@@ -740,7 +833,7 @@ class MainView(tk.Frame):
         self.menu_btn.grid(row=0, column=2, padx=(g.px(4), 0))
 
         foot = tk.Frame(self, bg=bg)
-        foot.grid(row=6, column=0, padx=g.px(SIDE), pady=pad(6, 0), sticky="we")
+        foot.grid(row=7, column=0, padx=g.px(SIDE), pady=pad(6, 0), sticky="we")
         foot.columnconfigure(0, weight=1)
         self.logging = Toggle(foot, theme, "Log this run", True, cb["logging"], bg, alt="Not logging")
         self.logging.grid(row=0, column=0, sticky="w")
@@ -748,8 +841,8 @@ class MainView(tk.Frame):
                                command=cb["best"], bg=bg)
         self.best_btn.grid(row=0, column=1, sticky="e")
         self.message = Message(self, theme, bg)
-        self.message.grid(row=7, column=0, padx=g.px(SIDE + 2), pady=pad(2, 14), sticky="we")
-        self.foot_widgets = [self.tiles_row, self.more_btn, self.details, self.reset_btn, self.menu_btn, foot]
+        self.message.grid(row=8, column=0, padx=g.px(SIDE + 2), pady=pad(2, 14), sticky="we")
+        self.foot_widgets = [self.read_health, self.tiles_row, self.more_btn, self.details, self.reset_btn, self.menu_btn, foot]
 
     # ---- showing things
     def show(self, **m):
@@ -767,6 +860,11 @@ class MainView(tk.Frame):
             self.pill.set(m["state"], m.get("state_text", ""))
         if "message" in m:
             self.message.set(m["message"], self.t.px(INNER - 6))
+        if "read_health_on" in m:
+            self._read_health_on = bool(m["read_health_on"])
+            self._show_read_health()
+        if "read_health" in m:
+            self.read_health.set(m["read_health"] if self._read_health_on else ())
         strip = {k: v for k, v in m.items() if k in STRIP_KEYS}
         if strip:
             self._last.update(strip)
@@ -808,7 +906,7 @@ class MainView(tk.Frame):
             for w in rows + self.foot_widgets:
                 w.grid_remove()
             st = self._strip(shape)
-            st.grid(row=8, column=0)
+            st.grid(row=9, column=0)
             self.columnconfigure(0, minsize=self.t.px(SHAPE_W[shape]))
             st.activate(True)
             self.compact_btn.set(icon="grow")
@@ -820,11 +918,20 @@ class MainView(tk.Frame):
         for w in self.foot_widgets:
             if on:
                 w.grid_remove()
+            elif w is self.read_health:
+                self._show_read_health()
             elif w is not self.details or self.details_open:
                 w.grid()
         self.start_btn.resize(INNER - 8 if on else INNER - 8 - 52 - 52)
         self.compact_btn.set(icon="grow" if on else "shrink")
         (self.log_btn.pack_forget() if on else self.log_btn.pack(side="left", padx=(2, 0), before=self.compact_btn))
+
+    def _show_read_health(self):
+        """Shows the readability strip in the full view when the setting is on (hidden in compact)."""
+        if self._read_health_on and not self.compact:
+            self.read_health.grid()
+        else:
+            self.read_health.grid_remove()
 
     def _menu(self):
         self.cb["menu"](self.menu_btn)

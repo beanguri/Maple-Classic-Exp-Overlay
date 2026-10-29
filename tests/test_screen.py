@@ -436,6 +436,14 @@ try:
 finally:
     m.time.monotonic = real_monotonic
 
+# ---- Classic World party list crop (red HP pills; smaller vs EXP digit height)
+_classic = cv2.imread(str(FRAMES / "party_classic_4.png"))
+if _classic is not None:
+    _canvas = cv2.copyMakeBorder(_classic, 80, 80, 80, 80, cv2.BORDER_CONSTANT, value=(40, 40, 40))
+    for _gh in (7.0, 11.0, 14.0):
+        _n = len(m.find_party_bars(_canvas, _gh))
+        check(f"Classic World party crop counts 4 members at EXP digits {_gh:.0f} px ({_n})", _n == 4)
+
 # ---- party: the right number of HP bars, from 1 to 6 members, on every background
 for key, info in sorted(PARTS["party"].items(), key=lambda kv: kv[1]["gh"]):
     gh, pitch = info["gh"], info["pitch"]
