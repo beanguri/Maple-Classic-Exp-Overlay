@@ -709,6 +709,11 @@ for scale in (1.0, 1.40625, 1.5, 1.875, 2.0, 2.8125, 3.75):
         if got != level:
             sizes_wrong.append((scale, level, got))
 check(f"every digit is read at the game's own sizes (1x, 1.41, 1.5, 1.88, 2x, 2.81, 3.75): {sizes_wrong or 'all'}", not sizes_wrong)
+# odd UI sizes (0, negative, huge) are skipped, not raised on (B02-1)
+pic, x0, cy = badge_scene(58, 14)
+check("odd UI sizes in the list (0, negative, tiny, huge) are ignored and the right one still reads",
+      level_ocr.read_level(pic, x0, cy, 14, [0.0, -1.0, 1e-9, 1e9, 2.0], {}) == 58
+      and level_ocr.read_level(pic, x0, cy, 14, [0.0, -1.0], {}) is None)
 # a leading zero, a level over 250 and a badge that fits none of the sizes tried are not levels
 for what, level, scales in (("a leading zero", "07", [2.0]), ("a level over 250", 251, [2.0]), ("a size that isn't tried", 58, [1.0, 1.4])):
     pic, x0, cy = badge_scene(level, 14)
