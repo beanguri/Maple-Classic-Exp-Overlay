@@ -3685,7 +3685,7 @@ class AutoLog:
         """An entry with everything the log needs, each of the right kind, as the overlay writes
         them. Anything else is left out, not crashed on: the file may have been edited by hand."""
         def number(x):
-            return type(x) in (int, float) and math.isfinite(x)
+            return type(x) in (int, float) and math.isfinite(x) and abs(x) <= 1e15     # (a line can't hold more; it'd only break the table)
 
         def optional(key, ok, empty=False):           # missing (or empty), or of the right kind
             return key not in e or (empty and e[key] is None) or ok(e[key])

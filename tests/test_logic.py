@@ -2254,6 +2254,8 @@ line = {"date": "2026-10-01", "map": "A", "level": 30, "party": 1, "exp": 5, "se
 check("a potions count that isn't a number leaves the line out", not m.AutoLog._valid(dict(line, potions={"Red": "a"})))
 check("...as does a potions entry that isn't a dict", not m.AutoLog._valid(dict(line, potions="Red")))
 check("potions counts that are numbers are fine", m.AutoLog._valid(dict(line, potions={"Red": 2})))
+check("a line with a number no play could reach (hand-edited) is left out, not shown as 300 digits",
+      not m.AutoLog._valid(dict(line, exp=1e300)) and not m.AutoLog._valid(dict(line, seconds=10**20)))
 tr = m.ExpTracker()
 tr.gained, tr._accum = -160, 120.0
 tr.samples.extend([(0, 100), (60, -60)])
