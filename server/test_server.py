@@ -53,7 +53,7 @@ def run(started, exp_hr, level=31, map_name="The Land of Wild Boar II", job="Ban
     return {"date": started[:10], "started": started, "map": map_name, "map_read": map_name, "class": job,
             "level_start": level, "level_end": level, "party": party, "exp": exp_hr * seconds / 3600,
             "seconds": seconds, "mesos": mesos_hr * seconds / 3600, "mesos_seconds": seconds,
-            "version": "0.9.4-beta", "seal": "x" * 24}
+            "version": "0.9.11-beta", "seal": "x" * 24}
 
 
 def day(n):

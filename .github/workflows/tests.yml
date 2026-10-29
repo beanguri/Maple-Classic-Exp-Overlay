@@ -43,6 +43,10 @@ jobs:
         run: python tests/test_ocr.py
       - name: Window tests (the notes box, in the real window)
         run: python tests/test_ui.py
+      - name: Site tests (a local copy of the site on this machine, a fresh database for each)
+        run: |
+          npm ci --prefix server
+          python server/run_tests.py
 
   macos:
     # The overlay can run from source on a Mac (the game in CrossOver, Whisky, Parallels or a
