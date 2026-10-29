@@ -232,20 +232,20 @@ def log_error(what, exc=None):
     done and the exception's type, not its message: a message with a number or a path in it would
     otherwise be written at every look and remembered for good."""
     key = (re.sub(r"\d+", "#", what), type(exc).__name__ if exc is not None else None)   # (a count in `what` is the same kind)
-    with _error_lock:
+    details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)) if exc else ""
+    with _error_lock:                                   # (the move to .old.log and the write too: two threads at once lose nothing)
         now = time.monotonic()
         if now - _last_errors.get(key, -1e9) < 60:
             return
         _last_errors[key] = now
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        if ERROR_LOG_PATH.exists() and ERROR_LOG_PATH.stat().st_size > 1_000_000:
-            os.replace(ERROR_LOG_PATH, ERROR_LOG_PATH.with_suffix(".old.log"))
-        details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)) if exc else ""
-        with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] v{VERSION}: {what}\n{details}\n")
-    except Exception:
-        pass
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            if ERROR_LOG_PATH.exists() and ERROR_LOG_PATH.stat().st_size > 1_000_000:
+                os.replace(ERROR_LOG_PATH, ERROR_LOG_PATH.with_suffix(".old.log"))
+            with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] v{VERSION}: {what}\n{details}\n")
+        except Exception:
+            pass
 
 
 def good_v2_spots(v):
