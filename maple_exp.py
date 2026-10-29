@@ -1110,6 +1110,17 @@ def _clean_job(text):
     return t if len(t) >= 3 else ""
 
 
+def hide_name_row(look):
+    """The picture a class look kept (see read_job), without the character name: the rows from where
+    _look_at_name finds the name down are blacked out. None if there is no picture. A copy: the look is unchanged."""
+    image = (look or {}).get("image")
+    if image is None:
+        return None
+    shown = image.copy()
+    shown[look.get("name_from", 0):] = 0
+    return shown
+
+
 def read_job(bgr, x0, cy, g, debug=None):
     """The job name in the status bar (e.g. 'Bandit'), from a shot where the EXP number's
     first digit is at x0 and its middle at cy, or None if it can't be read clearly.
@@ -1121,7 +1132,7 @@ def read_job(bgr, x0, cy, g, debug=None):
     reg = bgr[ry:int(cy + 3 * g), rx:max(0, int(x0 - 20 * g))]
     if debug is not None:
         debug.clear()
-        debug.update(image=reg, boxes=[], why="")
+        debug.update(image=reg, boxes=[], why="", name_from=max(0, int(cy + 0.9 * g) - 2 - ry))
 
     def give_up(why):
         if debug is not None:
@@ -1264,7 +1275,7 @@ class MapList:
         self.entries, self.by_key = [], {}
         try:
             lines = Path(path).read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except (OSError, ValueError):                   # (a missing file, or one damaged into bytes that aren't text)
             lines = []
         for line in lines:
             name, _, town = line.partition("\t")
@@ -1610,8 +1621,10 @@ class MesosDigits:
             try:
                 data = np.load(source)
                 if int(data["canon"]) == CANON:
-                    self.examples = {k[1:]: list(data[k]) for k in data.files if k.startswith("d")}
-                    break
+                    examples = {k[1:]: list(data[k]) for k in data.files if k.startswith("d")}
+                    if examples and all(v and all(np.size(p) == PH * PW for p in v) for v in examples.values()):
+                        self.examples = examples      # (a file that is a valid archive but holds other shapes is skipped)
+                        break
             except Exception:
                 continue
 
@@ -6130,7 +6143,7 @@ class App:
             how = f"Class. Not read: {look.get('why') or 'no clear look yet'}"
         else:
             how = "Class. Not read yet (it's tried every few seconds once the EXP bar is found)"
-        return (look or {}).get("image"), (look or {}).get("boxes", []), how
+        return hide_name_row(look), (look or {}).get("boxes", []), how     # (the crop reaches the name line: never shown)
 
     def view_capture(self):
         r, mr = self.last_capture, self.last_mesos

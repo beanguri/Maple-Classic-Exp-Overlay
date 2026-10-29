@@ -566,6 +566,21 @@ check("damaged settings fall back to the defaults",
       and "log_size" not in cfg and cfg["mode"] == "window")
 m.CONFIG_PATH.write_text("[1, 2", encoding="utf-8")
 check("an unreadable settings file gives the defaults", m.load_config()["topmost"] is True)
+# files that ship with the overlay can be damaged too (a bad copy, an antivirus): never a reason to stop reading
+folder = Path(tempfile.mkdtemp())
+(folder / "maps.txt").write_bytes(b"Henesys\t1\n\xc6\xff\xfe broken\n")
+check("a map list with bytes that aren't text is used as empty, not a crash", m.MapList(folder / "maps.txt").entries == [])
+import numpy as np  # noqa: E402
+for label, arrays in (("the wrong shape", {f"d{d}": np.zeros((3, 5), np.float32) for d in range(10)}),
+                      ("no examples", {f"d{d}": np.zeros((0, m.PH * m.PW), np.float32) for d in range(10)})):
+    np.savez(folder / "learned.npz", canon=np.array(m.CANON), **arrays)
+    md = m.MesosDigits(path=folder / "learned.npz")
+    try:
+        md.templates().scores(np.random.rand(40, 40).astype(np.float32))
+        works = md.complete
+    except Exception:
+        works = False
+    check(f"learned mesos digits with {label} are ignored: the shipped ones are used", works)
 
 # ---- mesos
 t = m.MesoTracker()
