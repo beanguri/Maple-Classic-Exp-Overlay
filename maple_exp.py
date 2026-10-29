@@ -1867,6 +1867,7 @@ class ScreenReader:
         self.badge_covered = False  # the last badge look found a window over it
         self.next_level_read = 0.0
         self._level_candidate = None    # a level seen once, waiting for a second capture to agree
+        self._level_asks = 0            # bumped by recheck_level: a badge read that started before it is dropped
         self.name_print = None      # a small picture of the character's name row (see level_ocr.name_print); never read as text
         self.next_name_read = 0.0
         self._tries = []                    # (part, worked) for the readers that tried during this look
@@ -2115,6 +2116,7 @@ class ScreenReader:
         """Read the badge at the next look (the % wrapped: the level may have gone up). The level known so
         far stays until a new one has been seen twice."""
         self.next_level_read, self._level_candidate = 0.0, None
+        self._level_asks += 1           # (called from the main thread: a read already under way saw the old picture)
 
     def _read_level(self, capture, rect):
         """Reads the level from the badge: a level counts once two looks in a row agree. A failing read
@@ -2135,6 +2137,7 @@ class ScreenReader:
             self.next_level_read = now + 5
             return
         self.badge_covered = False
+        asks = self._level_asks
         shot = capture.grab(x0, y0, w, h)
         look = {}
         try:
@@ -2148,6 +2151,8 @@ class ScreenReader:
             self._part_ok("level")
         self.level_look = look
         self._tried("level", seen is not None)
+        if asks != self._level_asks:
+            return                              # (forgotten or asked again while this read ran: it's of the old picture)
         if seen is None:
             self.level_failures += 1
             self._level_candidate = None
