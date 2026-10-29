@@ -421,7 +421,7 @@ check("...so is an advert", bad(map_read="Join our discord for free mesos now") 
       and bad(map_read="Visit discord.gg slash maple fans") == "not a map name" and bad(map_read="Best prices telegram channel") == "not a map name")
 check("...and a real map with the word 'free' in it is fine", call("/api/runs", {"install": who, "runs": [run(f"{day(15)}T12:00", 50000, map_name="Free Market 3")]})["results"][0].get("why") == "town")
 check("a run gaining 100 levels' worth of mesos an hour is refused",
-      bad(mesos=9e9) == "impossible mesos/hr")
+      bad(mesos=9e9, version="0.9.14-beta") == "impossible mesos/hr")   # (a current version: old ones' mesos are ignored from 2026-10-29)
 check("a Lv 200 run claiming 5% of the table's end a minute is refused", bad(level_start=200, level_end=200, exp=2e9) in
       ("impossible EXP for that level", "impossible EXP for those levels"))
 dozen = install()
