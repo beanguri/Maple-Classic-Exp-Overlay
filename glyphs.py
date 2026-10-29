@@ -73,7 +73,7 @@ class Font:
     @classmethod
     def load(cls, name="potion_count"):
         if name not in _fonts:
-            _fonts[name] = cls(json.loads((FONT_DIR / f"{name}.json").read_text()))
+            _fonts[name] = cls(json.loads((FONT_DIR / f"{name}.json").read_text(encoding="utf-8")))
         return _fonts[name]
 
     def pens(self, text):

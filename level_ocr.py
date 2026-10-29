@@ -32,7 +32,7 @@ _font = {}
 def font():
     """{digit: 15 x 11 float picture (1 = white)} from the badge font asset."""
     if not _font:
-        data = json.loads(FONT_FILE.read_text())
+        data = json.loads(FONT_FILE.read_text(encoding="utf-8"))
         for ch, g in data["glyphs"].items():
             _font[ch] = np.array([[c == "X" for c in row] for row in g["rows"]], np.float32)
     return _font

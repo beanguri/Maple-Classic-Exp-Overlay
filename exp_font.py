@@ -23,7 +23,7 @@ def load(path=FONT_PATH):
     """The font asset (cached)."""
     key = str(path)
     if key not in _cache:
-        _cache[key] = json.loads(Path(path).read_text())
+        _cache[key] = json.loads(Path(path).read_text(encoding="utf-8"))
     return _cache[key]
 
 
