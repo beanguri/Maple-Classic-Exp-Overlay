@@ -2392,5 +2392,30 @@ check("real positions (even off to the left, on another screen) are kept",
       cfg["pos"] == [-1800, 40] and cfg["log_size"] == [900, 600] and cfg["region"]["left"] == -1920 and cfg["mode"] == "region")
 m.CONFIG_PATH = real_config
 
+# ---- a PC set to a language with a decimal comma (German, French...) shows the same numbers and dates
+import locale  # noqa: E402
+old_locale = locale.setlocale(locale.LC_ALL)
+locale_entry = {"date": "2026-03-08", "map": "Rocky Road II", "map_read": "Rocky Road II", "level": 27, "party": 1, "class": "Bandit",
+                "exp": 154290, "seconds": 3600.0, "mesos": 3210, "mesos_seconds": 3600.0}
+
+
+def shown_now():
+    return (m.fmt_num(1234567.5), m.fmt_short(1234567), m.fmt_eta(7500), m.fmt_dur(3725), m.format_entry(locale_entry),
+            m.log_row(locale_entry))
+
+
+plain = shown_now()
+other = None
+for name in ("German_Germany.1252", "de_DE.UTF-8", "French_France.1252", "fr_FR.UTF-8"):
+    try:
+        locale.setlocale(locale.LC_ALL, name)
+    except locale.Error:
+        continue
+    other = shown_now()
+    break
+locale.setlocale(locale.LC_ALL, old_locale)
+check("numbers and dates read the same under a decimal-comma language (or that language isn't installed here)",
+      plain[0] == "1,234,568" and plain[1] == "1.23M" and (other is None or other == plain))
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
