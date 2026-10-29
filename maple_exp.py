@@ -1536,6 +1536,15 @@ def _mesos_spot(field, i):
     return x + w - (MESOS_FIRST + i * MESOS_PITCH + (max(i, 0) // 3) * MESOS_COMMA) * h
 
 
+def _match_near(templates, lay, cx, h):
+    """(digit, score, lead, x) for the digit spot at cx, or up to about a pixel either side if it fits
+    clearly better there: at small sizes a digit's shape can put it off the even spacing (a '3' read
+    a pixel off looked like an '8')."""
+    tries = [(templates.match(lay, (x, 0.4 * h, "digit")), x) for x in (cx, cx - h / 14, cx + h / 14)]
+    (digit, score, lead), x = max(tries, key=lambda t: t[0][1] - (0.02 if t[1] != cx else 0))
+    return digit, score, lead, x
+
+
 def _mesos_strokes(bgr, field):
     """A Layout for matching digits in the mesos box: how much darker each pixel is than
     the box around it (works solid or see-through)."""
@@ -1575,7 +1584,7 @@ def read_mesos_positions(bgr, field, templates, digit_count=None):
         cx = _mesos_spot(field, i)
         if cx - 0.3 * h < x:
             break
-        digit, score, lead = templates.match(lay, (cx, 0.4 * h, "digit"))
+        digit, score, lead, cx = _match_near(templates, lay, cx, h)
         empty = bool(digits) and score < 0.65
         if ended:
             # A clear digit after the end means one was missed in between. (Only a clear

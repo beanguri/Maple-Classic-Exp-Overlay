@@ -91,6 +91,12 @@ for name, info in sorted(PARTS["inventory"].items()):
     print(f"     (mesos box found by its outline, {size}: {ok}/{total})")
 
 # ---- storage and trade windows show a second mesos box: never read the wrong one
+# at the smallest UI size a digit can sit a pixel off its usual spot (Nexon's Mac app: "235,512" was read as 285,512)
+got = m.read_mesos_positions(cv2.imread(str(FRAMES / "mesos_box_gh7_mac.png")), (20, 10, 143, 14), templates)
+check(f"digits a pixel off their spots are still read right, EXP digits 7 px (read {got and got[0]})",
+      got is not None and got[0] == 235512)
+
+
 class FakeScreen:
     """Stands in for mss: one monitor showing `image` (the game), grab() cuts out of it."""
     def __init__(self, image):
