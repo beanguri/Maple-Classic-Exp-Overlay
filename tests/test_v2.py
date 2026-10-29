@@ -287,6 +287,8 @@ for sc in np.arange(4.0, 6.9, 0.005):                      # (a window dragged t
 check(f"glyph cells: the drawing bank stays within its memory cap through many scales ({glyphs._bank_bytes >> 20} MB held)",
       glyphs._bank_bytes <= glyphs.BANK_MAX_BYTES + (1 << 20) and glyphs._bank_bytes == sum(v[0].nbytes + v[1].nbytes + v[2].nbytes for v in glyphs._bank.values()))
 check("mesos v2: nothing on the picture is not_found", mesos_v2.read_mesos_v2(np.full((200, 300, 3), 128, np.uint8), [1.0])[0].why == "not_found")
+inv = mesos_v2.read_mesos_v2(255 - on_screen(game_box(24697), 1.0), [1.0])[0]
+check(f"mesos v2: the Windows inverted-colours filter reads nothing, never a wrong number (decision #9): {inv.value} / {inv.why}", inv.value is None)
 sliver = []
 for hw in ((1, 1), (1, 200), (200, 1), (3, 3), (14, 143)):          # (a window squeezed to a sliver: no box, never an error)
     try:
