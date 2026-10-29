@@ -70,6 +70,8 @@ def find_boxes(img, scale, line_widths=LINE_WIDTHS, thr=FRAME_MIN):
     a frame is a rectangle of dark one pixel lines: top and bottom 15 apart, left and right line_w apart; its
     four lines' mean contrast is the score and the weakest line decides."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32) if img.ndim == 3 else img.astype(np.float32)
+    if min(gray.shape[:2]) < scale:                       # (a picture squeezed to a sliver holds no box, and can't be shrunk)
+        return []
     small = gray if abs(scale - 1.0) < 0.01 else cv2.resize(gray, None, fx=1.0 / scale, fy=1.0 / scale, interpolation=cv2.INTER_AREA)
     rows, cols = small.shape
     ch, cv = _contrast(small, 0), _contrast(small, 1)

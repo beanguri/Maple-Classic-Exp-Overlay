@@ -173,6 +173,9 @@ def kernels_for(scale):
 Q = 8                       # sub-pixel positions per pixel kept for cells drawn ahead of time (1/8 pixel apart)
 PAD = 2                     # spare pixels around a cell
 _bank = {}
+_bank_bytes = 0            # what the bank holds: a cell at 5K is 45 KB, and every window height is a new scale, so the count alone is no bound
+BANK_MAX = 30000            # cells kept at most...
+BANK_MAX_BYTES = 96 << 20   # ...and at most this much memory (the bank starts again when either is passed)
 
 
 def _cell(font, ch, scale, kernel, qx, qy):
@@ -181,13 +184,16 @@ def _cell(font, ch, scale, kernel, qx, qy):
     key = (font.name, ch, round(scale, 4), kernel, qx, qy)
     got = _bank.get(key)
     if got is None:
-        if len(_bank) > 30000:
+        global _bank_bytes
+        if len(_bank) > BANK_MAX or _bank_bytes > BANK_MAX_BYTES:
             _bank.clear()
+            _bank_bytes = 0
         h = int(math.ceil(font.height * scale)) + 2 * PAD + 2
         w = int(math.ceil(font.layers(ch)[0].shape[1] * scale)) + 2 * PAD + 2
         p = draw(font, ch, scale, PAD + qx / Q, PAD + qy / Q, (h, w), kernel)
         ys, xs = np.nonzero(p[0] >= 0.97)
         got = _bank[key] = (ys, xs, (p[1:, ys, xs] / p[0, ys, xs]).T.astype(np.float32), h, w)
+        _bank_bytes += ys.nbytes + xs.nbytes + got[2].nbytes
     return got
 
 

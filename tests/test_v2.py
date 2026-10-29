@@ -280,7 +280,22 @@ check("mesos v2: a spot that read once is checked first and gives the same answe
 pair = np.concatenate([game_box(1234), game_box(5678)], axis=0)
 look, _ = mesos_v2.read_mesos_v2(pair, [1.0])
 check("mesos v2: two boxes = the player's can't be told: no value", look.value is None and look.why == "unclear" and len(look.boxes) == 2)
+bank_font = glyphs.Font.load("potion_count")
+for sc in np.arange(4.0, 6.9, 0.005):                      # (a window dragged through many heights at 5K: every height is a new scale)
+    for ch in "0123456789":
+        glyphs._cell(bank_font, ch, float(sc), "bilinear", 3, 5)
+check(f"glyph cells: the drawing bank stays within its memory cap through many scales ({glyphs._bank_bytes >> 20} MB held)",
+      glyphs._bank_bytes <= glyphs.BANK_MAX_BYTES + (1 << 20) and glyphs._bank_bytes == sum(v[0].nbytes + v[1].nbytes + v[2].nbytes for v in glyphs._bank.values()))
 check("mesos v2: nothing on the picture is not_found", mesos_v2.read_mesos_v2(np.full((200, 300, 3), 128, np.uint8), [1.0])[0].why == "not_found")
+inv = mesos_v2.read_mesos_v2(255 - on_screen(game_box(24697), 1.0), [1.0])[0]
+check(f"mesos v2: the Windows inverted-colours filter reads nothing, never a wrong number (decision #9): {inv.value} / {inv.why}", inv.value is None)
+sliver = []
+for hw in ((1, 1), (1, 200), (200, 1), (3, 3), (14, 143)):          # (a window squeezed to a sliver: no box, never an error)
+    try:
+        sliver.append(mesos_v2.read_mesos_v2(np.zeros(hw + (3,), np.uint8), [1.0, 1.5, 2.0])[0].why)
+    except Exception as e:
+        sliver.append(repr(e)[:60])
+check(f"mesos v2: a picture a pixel or a few wide or tall is not_found, never an error ({sliver})", set(sliver) == {"not_found"})
 check("mesos v2: the font has the ten digits and the comma", sorted(glyphs.Font.load("mesos").chars) == sorted("0123456789,"))
 
 # ---- the potion table at the controller's slot style (numbers only: no pictures needed)
