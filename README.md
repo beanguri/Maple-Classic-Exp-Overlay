@@ -116,7 +116,7 @@ Click the **log icon** (top left, next to the status pill) to open the log. It's
 
 - **Pause tracking after no EXP for...** How long you can go without EXP before it pauses by itself. This also restarts the log's 5-minute timer. The default is 15 seconds.
 - **Window transparency.** Makes the overlay see-through, up to 40%. (More and it could fade out of sight, with Settings in it.)
-- **Size.** Makes the text and the whole window smaller or bigger, from 60% to 200%. The smallest text stops at a readable size, so it never gets too small to read. It's sized for each screen, so a window moved to a screen with different Windows scaling (like a 5K and a 1440p screen) looks the same size on both.
+- **Size.** Makes the text and the whole window smaller or bigger, from 60% to 200%. The smallest text stops at a readable size, so it never gets too small to read. It's sized for each screen, so a window moved to a screen with different Windows scaling (like a 5K and a 1440p screen) looks the same size on both. If a Size would make the window too big for its screen, the biggest that fits is used there, and Settings says so.
 - **Compact shape.** Square, Wide or Bar: how compact mode looks. See [Compact shapes](#compact-shapes).
 - **Potions.** Turn net mesos and potion counting on or off, and type your own prices under **Prices**. See [Net mesos and potions](#net-mesos-and-potions).
 - **Level fallback.** Only for an EXP bar that shows just a percentage, when your level can't be read from the badge: type your level here. See [How accurate is it?](#how-accurate-is-it).
@@ -138,7 +138,6 @@ Mesos/hr is what you pick up. **Net mesos/hr** takes off what the potions you dr
 - **If the cost isn't shown,** the overlay says why instead of showing 0: "Potion bar not seen" (it hasn't seen the bar for a minute, for example because something covers it), or "No price for: …" (a potion it counted has no price yet; type one under **Prices**).
 - **It counts only while tracking.** Paused or in town, nothing counts. Picking up or buying more potions is never counted as using them.
 - **Prices are the NPC shop prices.** Potions no NPC sells count as free until you type what you pay, in ⚙ under **Settings > Potions > Prices**. You can change shop prices there too.
-- **Not tested with the real game:** potion stacks of four digits, the controller bar in very small game windows (around 800x600, where it may not be found), and rarely used potions on the controller bar. If a count looks wrong, please [report it](#something-not-working).
 - **Don't want it?** Switch it off under **Settings > Potions**. Nothing is counted and no net is shown.
 - **Your potion data never leaves your PC.** It isn't sent to the best-maps website.
 - **Mesos/hr leaves out shop, storage and trade changes,** and your inventory doesn't have to stay open: open it at the start, now and then, and when the overlay asks (for example after a trip to town).

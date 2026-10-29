@@ -75,7 +75,7 @@ PLATFORM = create_platform()
 PLATFORM.setup_process()
 cv2.setNumThreads(1)
 
-VERSION = "0.9.13-beta"
+VERSION = "0.9.14-beta"
 WINDOW_TITLE = "Maple Classic Exp Overlay"    # the version is shown in Settings
 OLD_TITLES = ("Maple EXP/hr",)               # what versions before 0.9.3 were called
 
@@ -141,7 +141,22 @@ SHAPE_BLURBS = {"square": "The narrow card: the big number, the level bar and St
                 "wide": "Longer sideways: the level bar on top and four numbers in a row.",
                 "bar": "One thin strip with the main numbers and a slim level bar."}
 # What's new, shown once after updating to a version (plain words, newest changes only). A version with no entry shows nothing.
-WHATS_NEW = {"0.9.13-beta": (
+WHATS_NEW = {"0.9.14-beta": (
+    (None, None, (
+        ("head", "Potions on every bar"),
+        "Potion counts now work on the controller bar (Standard or Cross-Style) as well as the keyboard bar, with the "
+        "game's UI Size on Default or Ideal. You can switch while it runs: the overlay notices by itself.",
+        "If the potion cost can't be worked out, it says why (\"Potion bar not seen\" or \"No price for: ...\") instead of showing 0.",
+        ("head", "Your level, read better"),
+        "The orange LV badge is now read with the game's own font, for bars that show only a %.",
+        ("head", "Steadier"),
+        "Your log is never saved over while antivirus or OneDrive holds the file for a moment.",
+        "Settings fits on smaller screens and scrolls. A Size too big for your screen uses the biggest that fits.",
+        "A bug report's picture of the whole game is deleted after 5 minutes.",
+        ("head", "Health reports (if you said yes)"),
+        "They also count which game UI size and potion bar layout you use, and how often the new mesos and party "
+        "readers agree. Still numbers only.")),),
+    "0.9.13-beta": (
     (None, None, (
         ("head", "Fewer reading problems"),
         "Reading keeps going when the map name or class can't be read, and a stuck text reader no longer freezes the display.",

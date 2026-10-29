@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.14-beta
+
+**Potions on every bar**
+- Potion counts now work on the controller bar (Standard or Cross-Style) as well as the keyboard bar, with the game's UI Size on Default or Ideal. The overlay recognises the bar by itself, and you can switch while it runs.
+- Counts are read with the game's own font. Skill icons on the bar aren't mistaken for potions, and a count whose last digits are hidden (like "22" for "224" under the mouse cursor) isn't counted as drinking.
+- If the potion cost can't be worked out, it says why instead of showing 0: "Potion bar not seen" (no bar for a minute) or "No price for: ..." (type a price under Settings, Potions, Prices).
+
+**Your level**
+- The orange LV badge (used when the EXP bar shows only a %) is read with the game's own font instead of the text reader.
+
+**Steadier**
+- Your log is never saved over while antivirus or OneDrive holds the file for a moment; changes wait and are saved once it can be read.
+- Settings is never taller than your screen and scrolls when needed (the bottom buttons were out of reach on 1080p). A Size too big for your screen uses the biggest that fits there; your choice is kept for a bigger screen.
+- A monitor plugged in or out while the overlay runs is noticed within a minute.
+- A log or settings file saved by another editor (with a BOM), a hand-edited number no play could reach, a damaged map list, or odd release notes no longer break anything.
+- The log window is never taller than your screen, and long values in Details are cut with "…".
+- A bug report's picture of the whole game (it can show chat and names) is deleted 5 minutes after the report opens, or at the next start.
+
+**Health reports (only if you said yes)**
+- They also count how many looks were at each game UI size (Default or Ideal) and potion bar layout (keyboard or controller), and how often new test readers for mesos and party size agree with the current ones. Still numbers only: never amounts, names or pictures. See Privacy in the README.
+
+**Best-maps website**
+- The top 5 maps show first, with Show more maps under them. Early data (fewer than 3 players) is hidden until you untick Hide early data. A map's details show EXP/hr by party size.
+
 ## 0.9.13-beta
 
 **Fewer reading problems**

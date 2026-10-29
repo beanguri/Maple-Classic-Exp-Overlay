@@ -3,10 +3,11 @@
 # Content-Security-Policy: browsers only run the site's own scripts (app.js), the GSAP file
 # from cdnjs (also checked against its hash in index.html), and the one small script in
 # index.html's <head>, by its hash. If that script is ever changed, put its new hash here
-# (until then browsers skip it, and the page just doesn't fade in).
+# (until then browsers skip it, and the page just doesn't fade in). It has two hashes: the
+# script with LF and with CRLF line ends (a Windows checkout deploys CRLF; both are the same script).
 # The site can't be shown inside another site (frame-ancestors), and only talks to itself.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com 'sha256-5650JeSW/X9GormTM/zJDUJohjLCzAEBD2Trafo5Dfo='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com 'sha256-5650JeSW/X9GormTM/zJDUJohjLCzAEBD2Trafo5Dfo=' 'sha256-1l8iRStkxLApat5iw1KdavS0hKUvC4u7Y8JXVPfi68o='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
