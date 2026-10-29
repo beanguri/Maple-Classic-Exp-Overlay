@@ -544,6 +544,28 @@ except RuntimeError:
     blocked = True
 m.urllib.request.urlopen = real_urlopen
 check("while testing (MAPLE_EXP_DATA is set) nothing can be sent to the real site", blocked and not sent)
+# B06-2: every sender (runs, health, Send report, update check) refuses while testing, and the runs body is exactly the agreed fields
+sent.clear()
+m.urllib.request.urlopen = capture
+refused = []
+for sender, args in ((m.post_runs, ("0" * 16, log.runs)), (m.post_health, ({},)), (m.post_report, ({"message": "x"},)), (m.check_for_update, ())):
+    try:
+        sender(*args)
+        refused.append(False)
+    except RuntimeError:
+        refused.append(True)
+m.urllib.request.urlopen = real_urlopen
+check("while testing, the run sender, health sender, Send report and update check all refuse and send nothing", all(refused) and not sent)
+sent.clear()
+os.environ["MAPLE_EXP_ALLOW_SHARE"] = "1"
+m.urllib.request.urlopen = capture
+m.post_runs("0" * 16, [dict(r, potions={"Red Potion": 9}, potion_cost=5, note="n", window=True) for r in log.runs])
+m.urllib.request.urlopen = real_urlopen
+os.environ.pop("MAPLE_EXP_ALLOW_SHARE")
+body = json.loads(sent[0][1].decode()) if sent else {}
+check("a shared run carries exactly the agreed fields, and the body only the install ID and the runs",
+      set(body) == {"install", "runs"} and set(body["runs"][0]) == {"date", "started", "map_read", "class", "level_start", "level_end", "party",
+                                                                   "exp", "seconds", "mesos", "mesos_seconds", "version", "seal"})
 check("no test fixture has sharing switched on (a launch on one would send its made-up runs)",
       not any(json.loads(f.read_text(encoding="utf-8")).get("share_runs") for f in (Path(__file__).parent / "upgrade").glob("*/config.json")))
 
