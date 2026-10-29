@@ -539,6 +539,12 @@ check("a bug report says why the class wasn't read", "Class not read: this windo
 check("it saves a picture, and the details as a text file", files["picture"].exists() and files["details"].exists())
 check("...with the whole story in the text file", all(w in files["details"].read_text(encoding="utf-8")
                                                       for w in ("== Game window ==", "== What it found ==", "== What happened")))
+game_pic = m.DATA_DIR / "bug-report-game.jpg"
+game_pic.write_bytes(b"x")
+app._forget_report_screen()
+check("the whole-game picture of a bug report (it can show chat and names) is deleted again", not game_pic.exists())
+app._forget_report_screen()
+check("...and deleting it twice (or when it was never made) is fine", not game_pic.exists())
 check("the web address a report is opened with stays short enough",
       len(m.urllib.parse.urlencode({"title": "x", "body": text})) < 7000)
 check("it never contains the Windows user name",

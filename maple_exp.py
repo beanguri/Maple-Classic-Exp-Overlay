@@ -4230,6 +4230,7 @@ def fmt_num(n):
 
 
 POTION_UNSEEN_AFTER = 60        # seconds tracking runs without a look at the potion bar before the cost line says so
+REPORT_SCREEN_SECONDS = 300     # a bug report's whole-game picture is deleted this long after the report page opened
 
 
 def fmt_short(n):
@@ -4356,6 +4357,7 @@ class App:
         self.autolog = AutoLog(self.cfg["gap_seconds"])
         self.map_name = None
         self.potion_bar = potion_bar.NOT_SEEN    # what the potion bar showed at the last look: a potion_bar.PotionLook
+        self._forget_report_screen()             # (a bug report's game picture left from last time)
         self.in_town = False                # on a town map: nobody farms there, so nothing is logged
         self.level = None
         self.note = None
@@ -6291,18 +6293,30 @@ class App:
             "Report a bug",
             "Also save a small picture of the whole game window?\n\n"
             "It shows exactly what the overlay sees, which helps a lot when something can't be found. "
-            "But it can include chat and character names, so only drag it in if you're happy with that.\n\n"
+            "But it can include chat and character names, so only drag it in if you're happy with that. "
+            f"It's deleted from your data folder after {REPORT_SCREEN_SECONDS // 60} minutes.\n\n"
             "(No is fine: the report works without it.)", default="no", parent=parent)
         files = self._save_report_files(screen)
         query = urllib.parse.urlencode({"title": f"Bug: (describe it here) [v{VERSION}]",
                                         "body": self._report_text(files)})
         webbrowser.open(f"https://github.com/{GITHUB_REPO}/issues/new?{query}")
+        if files.get("screen"):                   # (it can show chat and names: gone once there was time to drag it in)
+            self.root.after(REPORT_SCREEN_SECONDS * 1000, self._forget_report_screen)
         shown = files.get("picture") or files.get("details")
         if shown:
             try:
                 PLATFORM.show_file(shown)
             except Exception as e:
                 log_error("opening the bug report's folder", e)
+
+    @staticmethod
+    def _forget_report_screen():
+        """Deletes a bug report's whole-game picture (REPORT_SCREEN_SECONDS after the report page opened, and at start-up
+        for one left from a closed overlay): it can show chat and names, so it isn't kept in the data folder."""
+        try:
+            (DATA_DIR / "bug-report-game.jpg").unlink(missing_ok=True)
+        except Exception as e:
+            log_error("deleting the bug report's game picture", e)
 
     def _report_details(self):
         """The bug report's details text, scrubbed: the same words go to GitHub and to Send report."""
