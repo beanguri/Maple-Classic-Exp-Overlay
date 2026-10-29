@@ -180,6 +180,8 @@ root = m.tk.Tk()
 m.save_config({**m.DEFAULTS, "hotkeys_on": False, "check_updates": False, "share_runs": False, "pos": POS})
 app = m.App(root, m.DigitTemplates.load())
 t, meso = app.tracker, app.meso
+real_max_ui_scale = app._max_ui_scale
+app._max_ui_scale = lambda: m.UI_SCALES[-1]              # (these checks draw every Size; the cap for small screens is checked below)
 sizes_ok, widths = True, {}
 for scale in m.UI_SCALES:
     try:
@@ -644,8 +646,9 @@ for dpi in (96, 192):
             while stack:
                 c = stack.pop()
                 stack.extend(c.winfo_children())
+                scrolls = str(c).startswith(str(app._settings_inner))      # (below the window's bottom it scrolls)
                 if c.winfo_ismapped() and (c.winfo_rootx() + c.winfo_width() > sw.winfo_rootx() + sw.winfo_width() + 2
-                                           or c.winfo_rooty() + c.winfo_height() > sw.winfo_rooty() + sw.winfo_height() + 2):
+                                           or not scrolls and c.winfo_rooty() + c.winfo_height() > sw.winfo_rooty() + sw.winfo_height() + 2):
                     fit_bad.append(f"{dpi}dpi {scale}% settings: {c.winfo_class()} sticks out")
         for line in spill(sw):
             fit_bad.append(f"{dpi}dpi {scale}% settings: {line}")
@@ -654,6 +657,63 @@ for dpi in (96, 192):
         app.toggle_log()
 check(f"the log and Settings fit at the smallest and biggest Sizes ({fit_bad[:3]})", not fit_bad)
 app._dpi = 192 if app._dpi not in (96, 120, 144, 192) else app._dpi
+app.cfg["ui_scale"] = 100
+app._apply_ui_scale()
+
+# ---- Settings is never taller than its screen (it scrolls), and Size stops at the biggest that fits (B12-1)
+real_dpi = app._dpi
+app._dpi = 96
+app.cfg["ui_scale"] = 100
+app._apply_ui_scale()
+app.set_compact(False)
+if not app.view.details_open:
+    app.view._toggle_details()
+root.update()
+measured = (root.winfo_reqwidth(), root.winfo_reqheight())
+want = [round(p * 96 / 72) for p in m.MAIN_BIGGEST_PT]
+check(f"the main window's biggest size the Size cap uses matches the real window ({measured} vs {want})",
+      all(abs(a - b) <= 0.1 * b for a, b in zip(measured, want)))
+app.view._toggle_details()
+app._max_ui_scale = real_max_ui_scale
+real_screen = app._screen_box
+cap_bad, settings_bad = [], []
+for screen in ((0, 0, 1920, 1080), (0, 0, 1366, 768), (0, 0, 2560, 1440), (0, 0, 5120, 2880)):
+    app._screen_box = lambda screen=screen: screen
+    for dpi in (96, 120, 144, 192):
+        app._dpi = dpi
+        app.cfg["ui_scale"] = 200
+        app._apply_ui_scale()
+        used, room = app._ui_scale_used, app._screen_room()
+        tall = lambda s: s / 100 * dpi / 72 * m.MAIN_BIGGEST_PT[1]
+        nxt = m.UI_SCALES[m.UI_SCALES.index(used) + 1] if used < m.UI_SCALES[-1] else None
+        if used > m.UI_SCALES[0] and tall(used) > room[1] or nxt and tall(nxt) <= room[1] and nxt / 100 * dpi / 72 * m.MAIN_BIGGEST_PT[0] <= room[0]:
+            cap_bad.append(f"{screen[2]}x{screen[3]} {dpi}dpi: {used}%")
+        if app.cfg["ui_scale"] != 200:
+            cap_bad.append(f"{screen[2]}x{screen[3]} {dpi}dpi: the chosen Size was changed")
+        app.open_settings()
+        sw = app.settings_win
+        sw.update()
+        if sw.winfo_height() > room[1] + 2:
+            settings_bad.append(f"{screen[2]}x{screen[3]} {dpi}dpi {used}%: {sw.winfo_height()} > {room[1]:.0f}")
+        if app._settings_inner.winfo_reqheight() > room[1] + 2 and not app._settings_bar.winfo_ismapped():
+            settings_bad.append(f"{screen[2]}x{screen[3]} {dpi}dpi {used}%: taller than the screen and no scrollbar")
+        sw.destroy()
+        app.settings_win = None
+check(f"Size is used as the biggest that fits the screen (main window full with Details), the chosen one is kept ({cap_bad[:3]})",
+      not cap_bad)
+check(f"Settings is never taller than its screen, and scrolls when it would be ({settings_bad[:3]})", not settings_bad)
+app._screen_box = lambda: (0, 0, 1920, 1080)
+app._dpi = 96
+app.cfg["ui_scale"] = 100
+app._apply_ui_scale()
+app.open_settings()
+app.settings_win.update()
+check("on a 1080p screen at Size 100% Settings scrolls (its bottom buttons can be reached)",
+      app._settings_bar.winfo_ismapped() and app.settings_win.winfo_height() <= app._screen_room()[1] + 2)
+app.settings_win.destroy()
+app.settings_win = None
+app._screen_box = real_screen
+app._dpi = real_dpi
 app.cfg["ui_scale"] = 100
 app._apply_ui_scale()
 

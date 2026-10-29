@@ -193,6 +193,8 @@ WHATS_NEW = {"0.9.13-beta": (
 PICTURE_WIDTHS = (430, 340, 250, 0)    # the What's new pictures' widths, biggest first (0: none), until the page fits the screen
 # Settings > Size, in %: only these, so the window can't get too small to read or use.
 UI_SCALES = (60, 70, 80, 90, 100, 110, 125, 150, 175, 200)
+MAIN_BIGGEST_PT = (272, 571)    # the main window at its biggest (full, Details open), in points: 362x761 px at Size 100%, Windows 100%
+SCREEN_ROOM_PT = 75             # what a window leaves free on its screen for the taskbar and a title bar, in points
 MAX_TRANSPARENCY = 40       # %: more and the window can fade out of sight, with Settings in it
 STATS_SITE = "https://mcwo.app"       # shared 15-minute runs (server/)
 GITHUB_REPO = "beanguri/Maple-Classic-Exp-Overlay"
@@ -4632,8 +4634,10 @@ class App:
 
     def _apply_ui_scale(self):
         """Sizes every font by Settings > Size and for the screen the window is on (screens can
-        have different Windows scaling), and the log's rows and columns with them."""
-        old, self._px_per_pt = getattr(self, "_px_per_pt", None), self.cfg["ui_scale"] / 100 * self._dpi / 72
+        have different Windows scaling), and the log's rows and columns with them. A Size too big for
+        that screen is used as the biggest that fits (the one chosen is kept for a bigger screen)."""
+        self._ui_scale_used = min(self.cfg["ui_scale"], self._max_ui_scale())
+        old, self._px_per_pt = getattr(self, "_px_per_pt", None), self._ui_scale_used / 100 * self._dpi / 72
         for name, (_, size, _, _) in FONTS.items():
             # In pixels (negative), never under 9 so the smallest text stays readable.
             self.fonts[name].configure(size=-max(9, round(size * self._px_per_pt)))
@@ -4654,20 +4658,69 @@ class App:
             self.root.minsize(self.main.winfo_reqwidth() + 150, self.main.winfo_reqheight())
         self.root.geometry("")
 
+    def _screen_box(self):
+        """(left, top, width, height), in physical pixels, of the screen the overlay's title bar is on (mss's list of
+        screens, read again at most every 10 s, so a monitor plugged in or out is seen). The main screen if unknown."""
+        now = time.monotonic()
+        if now - getattr(self, "_screens_at", -1e9) > 10:
+            try:
+                with mss.mss() as sct:
+                    self._screens = [(s["left"], s["top"], s["width"], s["height"]) for s in sct.monitors[1:]]
+            except Exception:
+                self._screens = []
+            self._screens_at = now
+        r = self._window_rect() or self.cfg.get("pos")
+        x, y = (r[0] + 40, r[1] + 15) if r else (0, 0)
+        for box in self._screens:
+            if box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]:
+                return box
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _screen_room(self):
+        """The width and height a window may take on the overlay's screen (taskbar and title bar left free)."""
+        _, _, sw, sh = self._screen_box()
+        free = SCREEN_ROOM_PT * self._dpi / 72
+        return sw - free, sh - free
+
+    def _max_ui_scale(self):
+        """The biggest Size at which the main window at its biggest (full, Details open) fits its screen."""
+        room_w, room_h = self._screen_room()
+        pt = self._dpi / 72
+        fits = [s for s in UI_SCALES
+                if s / 100 * pt * MAIN_BIGGEST_PT[0] <= room_w and s / 100 * pt * MAIN_BIGGEST_PT[1] <= room_h]
+        return max(fits) if fits else UI_SCALES[0]
+
     def _fit_settings(self):
-        """Keeps the Settings window as big as what's in it. (Moving a window to a screen with
-        different scaling can leave it at a fixed size, which would cut its contents off.)"""
-        w = self.settings_win
-        if w and w.winfo_exists() and (w.winfo_width() < w.winfo_reqwidth() or w.winfo_height() < w.winfo_reqheight()):
+        """Keeps the Settings window as big as what's in it, but never taller than its screen: then what's in it
+        scrolls. (Moving a window to a screen with different scaling can leave it at a fixed size, which would
+        cut its contents off.)"""
+        w, canvas = self.settings_win, getattr(self, "_settings_canvas", None)
+        if not (w and w.winfo_exists() and canvas and canvas.winfo_exists()):
+            return
+        inner, bar = self._settings_inner, self._settings_bar
+        need_w, need_h = inner.winfo_reqwidth(), inner.winfo_reqheight()
+        height = int(min(need_h, self._screen_room()[1]))
+        canvas.configure(scrollregion=(0, 0, need_w, need_h))
+        if (int(canvas.cget("width")), int(canvas.cget("height"))) != (need_w, height):
+            canvas.configure(width=need_w, height=height)
+        if need_h > height and not bar.winfo_ismapped():
+            bar.pack(side="right", fill="y", before=canvas)
+        elif need_h <= height and bar.winfo_ismapped():
+            bar.pack_forget()
+            canvas.yview_moveto(0)
+        if w.winfo_width() < w.winfo_reqwidth() or w.winfo_height() < w.winfo_reqheight():
             w.geometry("")
 
     def _check_screen(self):
         """Resizes the text when the window is moved to a screen with different Windows scaling
-        (judged by its title bar, which stays put when the window changes size)."""
+        (judged by its title bar, which stays put when the window changes size), or to one where
+        a different Size fits."""
         r = self._window_rect()
         dpi = PLATFORM.screen_dpi(r[0] + 40, r[1] + 15) if r else None
-        if dpi and dpi != self._dpi:
+        moved = bool(dpi and dpi != self._dpi)
+        if moved:
             self._dpi = dpi
+        if moved or min(self.cfg["ui_scale"], self._max_ui_scale()) != self._ui_scale_used:
             self._apply_ui_scale()
 
     def _fill_log(self):
@@ -4945,7 +4998,19 @@ class App:
         w.attributes("-topmost", bool(self.cfg["topmost"]))
         for delay in (0, 150, 800):
             w.after(delay, lambda: PLATFORM.style_window(w, INK, TEXT_DIM) if w.winfo_exists() else None)
-        body = tk.Frame(w, bg=BG)
+        # (in a canvas that scrolls: on a small screen, or at a big Size, it can be taller than the screen; _fit_settings)
+        holder = tk.Frame(w, bg=BG)
+        holder.pack(fill="both", expand=True)
+        canvas = self._settings_canvas = tk.Canvas(holder, bg=BG, highlightthickness=0, width=1, height=1)
+        self._settings_bar = tk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=self._settings_bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = self._settings_inner = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: self._fit_settings())
+        w.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+               if self._settings_bar.winfo_ismapped() else None)
+        body = tk.Frame(inner, bg=BG)
         body.pack(padx=px(26), pady=px(22))
         text = dict(bg=BG, fg=FG, font=th.font("semibold", 12))
         dim = dict(bg=BG, fg=DIM, font=th.font("regular", 11))
@@ -4985,17 +5050,20 @@ class App:
         size_line = tk.Frame(body, bg=BG)
         size_line.pack(fill="x")
         tk.Label(size_line, text="Size", **text).pack(side="left")
-        # \u2212 100% +: steps through UI_SCALES only, so it stops at the smallest and biggest sizes.
-        size = tk.StringVar(value=f"{self.cfg['ui_scale']}%")
+        # \u2212 100% +: steps through UI_SCALES only, so it stops at the smallest size and at the biggest that fits this
+        # screen (the main window at its biggest must fit: _max_ui_scale).
+        size = tk.StringVar(value=f"{self._ui_scale_used}%")
+        top = UI_SCALES.index(self._max_ui_scale())
         stepper = tk.Frame(size_line, bg=BG)
         stepper.pack(side="right")
 
         def nudge(by):
             i = UI_SCALES.index(int(size.get().rstrip("%"))) + by
-            if 0 <= i < len(UI_SCALES):
+            if 0 <= i <= top:
                 size.set(f"{UI_SCALES[i]}%")
+            i = UI_SCALES.index(int(size.get().rstrip("%")))
             smaller.set(enabled=i > 0)
-            bigger.set(enabled=i < len(UI_SCALES) - 1)
+            bigger.set(enabled=i < top)
         smaller = Button(stepper, th, text="\u2212", kind="secondary", width=38, height=34, radius=10, size=15,
                          command=lambda: nudge(-1), bg=BG)
         smaller.pack(side="left")
@@ -5004,6 +5072,11 @@ class App:
                         command=lambda: nudge(1), bg=BG)
         bigger.pack(side="left")
         nudge(0)
+        if top < len(UI_SCALES) - 1:
+            kept = f" (you chose {self.cfg['ui_scale']}%: it's used on a bigger screen)" \
+                if self.cfg["ui_scale"] > self._ui_scale_used else ""
+            tk.Label(body, text=f"Bigger sizes don't fit this screen{kept}.", wraplength=wrap, justify="left",
+                     **dim).pack(anchor="w", pady=(px(4), 0))
         shape_line = tk.Frame(body, bg=BG)
         shape_line.pack(fill="x", pady=(px(14), 0))
         tk.Label(shape_line, text="Compact shape", **text).pack(side="left")
@@ -5077,7 +5150,7 @@ class App:
             self._apply_window_settings()
             w.attributes("-topmost", self.cfg["topmost"])
             scale = int(size.get().rstrip("%"))
-            if scale in UI_SCALES and scale != self.cfg["ui_scale"]:
+            if scale in UI_SCALES and scale != self._ui_scale_used:      # (not cfg: a Size kept for a bigger screen stays)
                 self.cfg["ui_scale"] = scale
                 self._apply_ui_scale()
                 self.root.after(60, self._reopen_settings)        # (drawn again at the new size)
@@ -5104,6 +5177,12 @@ class App:
                  bg=BG, fg=FAINT, font=th.font("regular", 10)).pack(anchor="w", pady=(px(8), 0))
         tk.Label(body, text=f"{WINDOW_TITLE} v{VERSION}. This is a beta: it's still being improved.", bg=BG, fg=FAINT,
                  font=th.font("regular", 10)).pack(anchor="w", pady=(px(2), 0))
+        w.update_idletasks()
+        self._fit_settings()
+        if r:                                    # (and never hanging off the bottom of that screen)
+            left, top_y, _, sh = self._screen_box()
+            y = max(top_y, min(r[1] + 40, top_y + int(self._screen_room()[1]) - w.winfo_reqheight()))
+            w.geometry(f"+{r[0] + 40}+{y}")
 
     def open_potion_prices(self):
         """One price per item the bar can show, over the shipped one. Clear a box for the default."""
