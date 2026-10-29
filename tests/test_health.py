@@ -807,6 +807,41 @@ m.App._health_done(fake, day, "later", "ui")
 check("the overlay notes in errors.log that the site doesn't know the key yet, and the day still waits",
       not fake._health_sending and not log.days[day]["sent"] and "doesn't know the health field ui" in m.ERROR_LOG_PATH.read_text(encoding="utf-8"))
 
+# ---- B04: a clock that was far ahead once can't stop the reports for good
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10", [], "screen", "ok")
+log.look("read")
+clock[0] += 86400
+log.attempting()                                    # (the clock was 3 years ahead when this send was tried...)
+log.last_attempt = clock[0] + 3 * 365 * 86400
+log.finish("2026-10-25", "later")
+log.retry_after = clock[0] + 3 * 365 * 86400
+log.save()
+clock[0] += 3601                                    # ...and now it shows the right time again
+back = new_log()
+wait = back.due(HID) is None                        # (a 'later' still waits for the next UTC midnight, no longer)
+clock[0] = (clock[0] // 86400 + 1) * 86400 + 1
+check("a last_attempt and retry_after from a clock that was years ahead hold sending back at most until the next UTC midnight",
+      wait and back.due(HID) is not None)
+fresh()
+log = new_log()
+log.snapshot("0.9.14-beta", "Windows 10", [], "screen", "ok")
+log.look("read")
+log.attempting()
+clock[0] += 86400
+log.last_attempt = 1e308
+first = log.due(HID)                                # (counts as an attempt just now: an hour from here it goes)
+clock[0] += 3601
+check("...also an absurd last_attempt (held back an hour at most)", first is None and log.due(HID) is not None)
+fresh()
+(folder / "health.json").write_text(json.dumps({"days": {"2026-10-24": {"looks": 5, "exp": {"read": 5}, "hist": {"9" * 5000: 3, "7": 2, "99999": 1},
+                                    "snap": {"version": "0.9.14-beta", "os": "x", "capture": "screen", "tesseract": "ok", "screens": []}}}}),
+                                   encoding="utf-8")
+hand = new_log()
+check("the look-time histogram read from the file keeps only the buckets the overlay makes (0..%d)" % healthlog.MAX_BUCKET,
+      hand.days["2026-10-24"]["hist"] == {"7": 2})
+
 # ---- the Reading carries the new fields (old code that builds a Reading without them keeps working)
 rd = m.Reading("x")
 check("a Reading has no UI size, layout or part shadows until a reader sets them",
