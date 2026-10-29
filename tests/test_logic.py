@@ -2327,6 +2327,37 @@ path.write_text("﻿" + path.read_text(encoding="utf-8"), encoding="utf-8")
 log2 = m.AutoLog(15, path, path.with_suffix(".txt"))
 check("a log with a BOM in front still loads (its lines aren't lost)", len(log2.entries) == 1)
 check("...and no copy was kept as 'damaged'", not list(path.parent.glob("exp_log.damaged-*.json")))
+
+# ---- a log that can't be read for a moment (antivirus or OneDrive holding it) is never saved over
+log, path = new_log()
+log._add("Rocky Road II", 27, 1, 1000, 300, 0, 0)
+m.AutoLog(15, path, path.with_suffix(".txt"))._add("Ant Tunnel I", 27, 1, 500, 300, 0, 0)    # another writer adds a line
+real_read, locked = m.Path.read_text, [True]
+
+
+def locked_read(self, *a, **k):
+    if self == path and locked[0]:
+        raise PermissionError(13, "The process cannot access the file")
+    return real_read(self, *a, **k)
+
+
+m.Path.read_text = locked_read
+try:
+    log._add("Sleepy Wood", 27, 1, 700, 300, 0, 0)
+    on_disk = sorted(e["map"] for e in json.loads(real_read(path, encoding="utf-8"))["entries"])
+    check("a log that can't be read right now isn't saved over (the other writer's line stays)",
+          on_disk == ["Ant Tunnel I", "Rocky Road II"])
+    check("...the change is kept in memory meanwhile", any(e["map"] == "Sleepy Wood" for e in log.entries))
+    locked[0] = False
+    log._add("Henesys Hunting Ground I", 27, 1, 100, 300, 0, 0)
+finally:
+    m.Path.read_text = real_read
+on_disk = sorted(e["map"] for e in json.loads(path.read_text(encoding="utf-8"))["entries"])
+check("...and once it reads again both changes land on the file, nothing of the other writer's lost",
+      on_disk == ["Ant Tunnel I", "Henesys Hunting Ground I", "Rocky Road II", "Sleepy Wood"])
+check("...and no copy was kept as 'damaged' for a file that was only busy",
+      not list(path.parent.glob("exp_log.damaged-*.json")))
+
 line = {"date": "2026-10-01", "map": "A", "level": 30, "party": 1, "exp": 5, "seconds": 3, "potion_cost": 5,
         "potion_seconds": 3}
 check("a potions count that isn't a number leaves the line out", not m.AutoLog._valid(dict(line, potions={"Red": "a"})))

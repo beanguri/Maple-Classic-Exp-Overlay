@@ -3575,6 +3575,7 @@ LOG_VERSION = 4     # 2: mesos/hr from the mesos tracker; 3: class, seals and ru
 NOTE_MAX = 4000     # characters in a note on a log line
 NOTE_MARK = "\u270e"            # shown in the log's Note column for lines that have one
 BACKUPS_KEPT = 7    # days of log backups kept (backups/ in the data folder)
+UNSAVED_MAX = 2000  # log changes kept in memory while the file can't be read (hours of play); then it's saved over
 RUN_SECONDS = 900   # a run: 15 minutes of non-stop farming on one map, one party size
                     # (until 0.9.4 a run was an hour; those are still shared as they are)
 SITE_GAP = 15       # seconds without EXP that end a run, whatever the gap setting (which is for the log lines)
@@ -3619,6 +3620,7 @@ class AutoLog:
         self.entries, self.aliases, self.runs = [], {}, []   # aliases: misread/renamed map -> name
         self.install = secrets.token_hex(8)           # this log's own id, part of its seals
         self._kept = set()                            # problems a copy of the file was kept for
+        self.unread, self._unsaved = False, []        # the file couldn't be read: changes made only in memory so far
         self.looks, self.epoch = [], None             # inventory looks (when, mesos gained so far)
         self.pending = None                           # a finished run waiting for a look after its end
         self._misreads = ()                           # the MesoTracker's misreads, as last given
@@ -3664,11 +3666,23 @@ class AutoLog:
     # ---- the file
     def _load(self):
         """Reads the log file into memory (keeps what's there if it can't be read).
-        Returns the file's format version."""
+        Returns the file's format version. A file that is there but can't be read right now (antivirus or
+        OneDrive holding it) isn't damaged: self.unread is set, and nothing is saved over it until it reads."""
+        self.unread = False
         if not self.path.exists():
             return LOG_VERSION
+        for wait in (0.1, 0.3, None):
+            try:
+                text = self.path.read_text(encoding="utf-8-sig")     # (-sig: Notepad can save a BOM in front)
+                break
+            except OSError as e:
+                if wait is None:
+                    log_error("reading the EXP log (it's left as it is until it can be read)", e)
+                    self.unread = True
+                    return LOG_VERSION
+                time.sleep(wait)
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8-sig"))     # (-sig: Notepad can save a BOM in front)
+            data = json.loads(text)
             entries, aliases = data.get("entries", []), data.get("aliases", {})
             runs = data.get("runs", [])
             if not isinstance(entries, list) or not isinstance(aliases, dict) or not isinstance(runs, list):
@@ -3728,8 +3742,19 @@ class AutoLog:
             return False
 
     def _change(self, change):
-        """Applies change() to the latest log on disk and saves it."""
+        """Applies change() to the latest log on disk and saves it. While the file can't be read, the change is
+        made in memory only and made again on the file once it reads (saving memory over it would lose what
+        another writer put there); after very many such changes memory is saved anyway, as before."""
         self._load()
+        if self.unread:
+            if len(self._unsaved) < UNSAVED_MAX:
+                self._unsaved.append(change)
+                return change()
+            self.unread = False                          # (waited long enough: memory is saved over it, as before)
+        else:
+            for earlier in self._unsaved:
+                earlier()
+        self._unsaved = []
         result = change()
         self.save()
         return result
@@ -4174,6 +4199,8 @@ class AutoLog:
             log_error("backing up the EXP log", e)
 
     def save(self):
+        if self.unread:
+            return                                       # (never written over a file that couldn't be read: see _load)
         self._back_up()
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
