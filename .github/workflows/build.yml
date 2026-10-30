@@ -170,8 +170,7 @@ jobs:
   macos:
     # The Mac download: a .app (Apple Silicon) with Tesseract inside, signed ad hoc (no Apple
     # Developer account), so macOS asks the first time it's opened. Made by build_macos.py.
-    # Runs after the Windows build so the draft release already exists to add it to.
-    needs: build
+    # Runs alongside the Windows build; on a version tag it waits for that job's draft release.
     runs-on: macos-latest
     permissions:
       contents: write             # adding the zip to the draft release (version tags only)
@@ -226,7 +225,12 @@ jobs:
           TAG: ${{ github.ref_name }}
           ZIP: ${{ steps.sum.outputs.zip }}
         run: |
-          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          # The Windows job makes the draft: wait for it (up to 20 minutes).
+          for try in $(seq 40); do
+            state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+            [ "$state" != "none" ] && break
+            sleep 30
+          done
           if [ "$state" = "true" ]; then
             gh release upload "$TAG" "$ZIP" release/SHA256SUMS-macOS.txt --clobber
           else
