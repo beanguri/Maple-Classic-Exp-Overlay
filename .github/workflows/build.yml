@@ -166,3 +166,73 @@ jobs:
           mkdir check
           gh release download "$TAG" --pattern "$name" --dir check
           (cd check && sha256sum --check ../release/SHA256SUMS.txt)
+
+  macos:
+    # The Mac download: a .app (Apple Silicon) with Tesseract inside, signed ad hoc (no Apple
+    # Developer account), so macOS asks the first time it's opened. Made by build_macos.py.
+    # Runs alongside the Windows build; on a version tag it waits for that job's draft release.
+    runs-on: macos-latest
+    permissions:
+      contents: write             # adding the zip to the draft release (version tags only)
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install Tesseract and the packages
+        run: |
+          brew install tesseract
+          python -m pip install -r requirements.txt pyinstaller==6.17.0
+      - name: Tests
+        run: |
+          python tests/test_logic.py
+          python tests/test_ocr.py
+          python tests/test_v2.py
+      - name: Build
+        run: python build_macos.py
+      - name: SHA-256 of the download
+        id: sum
+        shell: bash
+        run: |
+          cd release
+          shasum -a 256 *.zip | tee SHA256SUMS-macOS.txt
+          echo "zip=release/$(ls *.zip)" >> "$GITHUB_OUTPUT"
+          { echo "### The Mac download"; echo; echo '```'; cat SHA256SUMS-macOS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record where the download came from (attestation)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: ${{ steps.sum.outputs.zip }}
+      - name: Keep the download on this run's page (the zip itself, not wrapped in another zip)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          path: ${{ steps.sum.outputs.zip }}
+          archive: false
+      - name: Keep the checksum on this run's page
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          path: release/SHA256SUMS-macOS.txt
+          archive: false
+      - name: Add it to the draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ steps.sum.outputs.zip }}
+        run: |
+          # The Windows job makes the draft: wait for it (up to 20 minutes).
+          for try in $(seq 40); do
+            state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+            [ "$state" != "none" ] && break
+            sleep 30
+          done
+          if [ "$state" = "true" ]; then
+            gh release upload "$TAG" "$ZIP" release/SHA256SUMS-macOS.txt --clobber
+          else
+            echo "::warning::$TAG isn't a draft release ($state), so the Mac zip is only on this run's page."
+          fi
