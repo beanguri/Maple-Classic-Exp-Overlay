@@ -331,5 +331,115 @@ check("the controller's cluster has 8 cells numbered 0-7, none overlapping",
       sorted(shown) == list(range(8)) and all(not (a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
                                                for i, a in shown.items() for j, b in shown.items() if i < j))
 
+# ---- the party list's bar frame (party v3, ticket P02): drawn at any scale and sub-pixel position, over made-up backgrounds
+import party_shapes as psh  # noqa: E402
+
+SH = psh.Shape.load()
+BAR_W, BAR_H = SH.w, SH.h
+
+
+def synth_party_bar(scale, kernel, tx, ty, shape, bg, fill=(40, 40, 200), seed=3, alien=None):
+    """A party bar as the game would show it: the 67 x 11 design-size bar (black frame, white rim, `fill` inside, the
+    four corner pixels left to the background) over a design-size background (`bg`: a grey level, or "busy" = dark
+    noise that touches the frame), scaled by the game's way (kernel) with its top left design pixel at (tx, ty).
+    alien=(w, h): a world HP bar look-alike of that size instead (the same frame, rim and dark inside)."""
+    m = 5
+    rng = np.random.default_rng(seed)
+    w, h = alien if alien else (BAR_W, BAR_H)
+    cw, ch = w + 2 * m, h + 2 * m
+    canvas = (rng.integers(0, 50, (ch, cw, 1)).repeat(3, axis=2).astype(np.float32) if bg == "busy"
+              else np.full((ch, cw, 3), float(bg), np.float32))
+    if alien:
+        canvas[m:m + h, m:m + w] = 30.0                                    # dark inside
+        canvas[m:m + h, m] = canvas[m:m + h, m + w - 1] = 0.0
+        canvas[m, m:m + w] = canvas[m + h - 1, m:m + w] = 0.0
+        canvas[m + 1:m + h - 1, m + 1] = canvas[m + 1:m + h - 1, m + w - 2] = 255.0
+        canvas[m + 1, m + 1:m + w - 1] = canvas[m + h - 2, m + 1:m + w - 1] = 255.0
+    else:
+        for r, row in enumerate(SH_FRAME):
+            for c, ch_ in enumerate(row):
+                if ch_ == "#":
+                    canvas[m + r, m + c] = 0.0
+                elif ch_ == "o":
+                    canvas[m + r, m + c] = 255.0
+                elif (r, c) not in ((0, 0), (0, BAR_W - 1), (BAR_H - 1, 0), (BAR_H - 1, BAR_W - 1)):
+                    canvas[m + r, m + c] = fill
+    wy = psh.weights(shape[0], scale, ty - m * scale, ch, kernel)
+    wx = psh.weights(shape[1], scale, tx - m * scale, cw, kernel)
+    return np.clip(np.stack([wy @ canvas[:, :, k] @ wx.T for k in range(3)], axis=2), 0, 255).astype(np.uint8)
+
+
+SH_FRAME = json.loads(psh.ASSET.read_text(encoding="utf-8"))["frame"]
+check("party shapes: the frame is 67 x 11 and the same mirrored left to right and top to bottom",
+      (BAR_W, BAR_H) == (67, 11) and SH_FRAME == [r[::-1] for r in SH_FRAME] and SH_FRAME == SH_FRAME[::-1])
+check("party shapes: a one-pixel black frame, a white rim just inside it, and the fill left as don't care",
+      set(SH_FRAME[0]) == {"#", "."} and set(SH_FRAME[1]) == {"#", "o"} and set(SH_FRAME[5]) == {"#", "o", "."}
+      and SH_FRAME[5][0] == "#" and SH_FRAME[5][1] == "o" and SH_FRAME[5][2] == ".")
+check("party shapes: the numbers the reader needs (row pitch 17; the panel's border is five design pixels above the first bar)",
+      SH.pitch == 17 and SH.panel["top"] == -5 and SH.panel["bottom"] == 14 and SH.panel["right"] == 72)
+
+bad = []
+for scale in (1.0, 1.40625, 1.5625, 1.875, 2.0, 2.0833, 2.8125, 3.75):
+    for kernel in psh.kernels_for(scale):
+        for bg in (200, "busy"):
+            for qx, qy in ((0, 0), (3, 5), (7, 1)):
+                tx, ty = 12 + qx / 8, 12 + qy / 8
+                shape = (int(np.ceil(BAR_H * scale)) + 30, int(np.ceil(BAR_W * scale)) + 30)
+                img = synth_party_bar(scale, kernel, tx, ty, shape, bg)
+                got = psh.agree(img, tx, ty, scale, kernel)
+                if not got or got[1] < 100 or got[0] != got[1]:
+                    bad.append((scale, kernel, bg, qx, qy, got))
+check(f"party shapes: a bar drawn at 1x to 3.75x, at any phase, whole step both ways, over a light or a dark busy background "
+      f"touching the frame, is matched on every trusted pixel ({bad[:2] or 'all'})", not bad)
+
+bad = []
+for scale in (1.0, 1.40625, 1.875, 2.0, 2.8125):
+    kernel = psh.kernels_for(scale)[0]
+    shape = (int(np.ceil(BAR_H * scale)) + 30, int(np.ceil(BAR_W * scale)) + 30)
+    img = synth_party_bar(scale, kernel, 12.0, 12.0, shape, "busy")
+    unit = 1.0 if kernel == "point" else 0.25 * scale        # the least shift that must show: a screen pixel, or a quarter design pixel
+    for dx, dy, limit in ((unit, 0, 0.97), (-unit, 0, 0.97), (0, unit, 0.7), (0, -unit, 0.7), (0, 2 * unit, 0.7)):
+        off = psh.agree(img, 12.0 + dx, 12.0 + dy, scale, kernel)
+        if off and off[0] / off[1] > limit:
+            bad.append((scale, round(dx, 2), round(dy, 2), round(off[0] / off[1], 2)))
+check(f"party shapes: a drawing a screen pixel (smoothed: a quarter design pixel) off the real bar is not a full match: "
+      f"sideways it loses the ends, up or down the whole top and bottom ({bad[:3] or 'none'})", not bad)
+
+bad = []
+for scale in (1.0, 1.40625, 2.0, 2.8125):
+    kernel = psh.kernels_for(scale)[0]
+    alien = (76, 14)                                                       # a world HP bar: wider and taller, same frame
+    shape = (int(np.ceil(16 * scale)) + 16, int(np.ceil(78 * scale)) + 16)
+    img = synth_party_bar(scale, kernel, 7.0, 6.0, shape, "busy", alien=alien)
+    best = 0.0
+    for dy in np.arange(-3, 3.01, 0.25):
+        for dx in np.arange(-3, 3.01, 0.25):
+            got = psh.agree(img, 7.0 + dx * scale, 6.0 + dy * scale, scale, kernel)
+            if got and got[1]:
+                best = max(best, got[0] / got[1])
+    if best > 0.8:
+        bad.append((scale, round(best, 2)))
+check(f"party shapes: a world HP bar (same frame, rim and dark inside, 76 x 14) is far from matching at any spot ({bad or 'all below 0.8'})",
+      not bad)
+
+fr1, _ = psh.frame(1.0, "point", 0, 0)
+fr2, _ = psh.frame(2.0, "point", 0, 0)
+check("party shapes: at a whole step block for block, every trusted pixel is pure black or pure white; at 1x there are 296",
+      len(fr1.ys) == 296 and set(np.unique(fr1.expect)) == {0.0, 255.0} and set(np.unique(fr2.expect)) == {0.0, 255.0})
+fb, _ = psh.frame(1.40625, "bilinear", 3, 5)
+check("party shapes: smoothed, the pixels where frame meets rim keep an exact grey and the blurred outer ring is left out",
+      (fb.expect > 1).any() and (fb.expect < 254).any() and len(fb.ys) > 150)
+check("party shapes: the same scale and phase gives the same drawing from the cache",
+      psh.frame(1.40625, "bilinear", 3, 5)[0] is fb)
+known, expect = psh.draw(1.40625, 6.5, 6.5, (30, 100), "bilinear")
+check("party shapes: draw() shows 0..1 of every pixel as frame or rim, grey values in 0..255",
+      known.min() >= 0 and known.max() <= 1.0001 and expect.min() >= 0 and expect.max() <= 255.001)
+check("party shapes: a drawing that would leave the picture is None, never an error",
+      psh.agree(np.zeros((20, 20, 3), np.uint8), 2.0, 2.0, 1.0, "point") is None
+      and psh.agree(np.zeros((100, 200, 3), np.uint8), 0.0, 0.0, 1.0, "point") is None)
+edges = psh.panel_edges(100.0, 50.0, 50.0 + 4 * 17 * 1.5, 1.5)
+check("party shapes: panel_edges puts the border above the first row, below the last and right of the column, at the scale",
+      near(edges["top"], 50.0 - 5 * 1.5) and near(edges["bottom"], 50.0 + 4 * 17 * 1.5 + 14 * 1.5) and near(edges["right"], 100.0 + 72 * 1.5))
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
