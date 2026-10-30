@@ -441,5 +441,220 @@ edges = psh.panel_edges(100.0, 50.0, 50.0 + 4 * 17 * 1.5, 1.5)
 check("party shapes: panel_edges puts the border above the first row, below the last and right of the column, at the scale",
       near(edges["top"], 50.0 - 5 * 1.5) and near(edges["bottom"], 50.0 + 4 * 17 * 1.5 + 14 * 1.5) and near(edges["right"], 100.0 + 72 * 1.5))
 
+# ---- reader v3 for the party size (party v3, ticket P03): whole lists drawn the game's way, over made-up backgrounds
+import party_v3 as p3  # noqa: E402
+
+P3_SCALES = ((1.0, "point"), (1.40625, "bilinear"), (2.0, "point"), (2.8125, "bilinear"), (1.875, "bilinear"))
+P3_CW, P3_CH = 290, 170
+
+
+def fake_party(scale, kernel, n, bg=200, ph=(0.37, 0.61), x0=12, y0=30, x_left=98, covers=(), grey=(), alien=None,
+               extra_bars=(), seed=5):
+    """A party list as the game shows it, scaled the game's way (kernel) with the design area's top left `ph` screen
+    pixels in. n rows, 17 design pixels apart from (x0 + x_left, y0); the panel behind them see-through with its
+    two border lines (the inner lighter than the outer); a bullet and black 'name' strokes (pure 0) in every row;
+    the bar frame from the asset, red inside (grey in the `grey` rows). bg: a grey level, or "busy" = dark noise and
+    black blocks behind the list. alien=(x, y): a world HP bar look-alike (76 x 14). extra_bars: more real bars at
+    (x, y). covers: opaque (x0, y0, x1, y1, grey) rectangles drawn over it all, in design pixels."""
+    rng = np.random.default_rng(seed)
+    cv = np.zeros((P3_CH, P3_CW, 3), np.float32)
+    ox = x0 + x_left
+    ys = [y0 + 17 * k for k in range(n)]
+    if bg == "busy":
+        cv[:] = rng.integers(0, 45, (P3_CH, P3_CW, 1))
+        for _ in range(8):
+            a, b = int(rng.integers(0, P3_CW - 60)), int(rng.integers(0, P3_CH - 20))
+            cv[b:b + int(rng.integers(6, 20)), a:a + int(rng.integers(20, 60))] = 0.0
+        if n:
+            cv[ys[0] - 4:ys[-1] + 14, ox - 6:ox + 74] = 0.0                # dark right behind the bars, touching the frames
+    else:
+        cv[:] = float(bg)
+    if n:
+        top, bot, right = ys[0] - 5, ys[-1] + 14, ox + 72
+        cv[top - 1:bot + 2, x0 - 1:right + 2] = 150.0                      # the outer line
+        cv[top:bot + 1, x0:right + 1] = 235.0                              # the inner line (the inside is drawn over it)
+        back = cv[top + 1:bot, x0 + 1:right]
+        back = np.zeros_like(back) + (rng.integers(0, 45, (bot - top - 1, right - x0 - 1, 1)) if bg == "busy" else float(bg))
+        cv[top + 1:bot, x0 + 1:right] = 0.62 * back + 0.38 * 205.0        # see-through, light grey at 38%
+        for y in ys:
+            cv[y + 3:y + 8, x0 + 7:x0 + 12] = (0, 150, 255)                 # the bullet
+            for x in range(x0 + 16, ox - 8, 4):                              # the name: black strokes, pure 0
+                cv[y + 2:y + 9, x:x + 2 + int(rng.integers(0, 2))] = 0.0
+
+    def bar(x, y, fill):
+        for r, row in enumerate(SH_FRAME):
+            for c, ch_ in enumerate(row):
+                if ch_ == "#":
+                    cv[y + r, x + c] = 0.0
+                elif ch_ == "o":
+                    cv[y + r, x + c] = 255.0
+                elif (r, c) not in ((0, 0), (0, BAR_W - 1), (BAR_H - 1, 0), (BAR_H - 1, BAR_W - 1)):
+                    cv[y + r, x + c] = fill
+    for k, y in enumerate(ys):
+        bar(ox, y, (84, 76, 86) if k in grey else (0, 0, 200))
+    for x, y in extra_bars:
+        bar(x, y, (0, 0, 200))
+    if alien:
+        x, y = alien
+        cv[y:y + 14, x:x + 76] = 30.0
+        cv[y:y + 14, x] = cv[y:y + 14, x + 75] = 0.0
+        cv[y, x:x + 76] = cv[y + 13, x:x + 76] = 0.0
+        cv[y + 1:y + 13, x + 1] = cv[y + 1:y + 13, x + 74] = 255.0
+        cv[y + 1, x + 1:x + 75] = cv[y + 12, x + 1:x + 75] = 255.0
+    for a, b, c, d, g in covers:
+        cv[b:d, a:c] = float(g)
+    shape = (int(P3_CH * scale) + 2, int(P3_CW * scale) + 2)
+    wy = psh.weights(shape[0], scale, ph[1], P3_CH, kernel)
+    wx = psh.weights(shape[1], scale, ph[0], P3_CW, kernel)
+    img = np.clip(np.stack([wy @ cv[:, :, k] @ wx.T for k in range(3)], axis=2), 0, 255).astype(np.uint8)
+    return img, dict(ox=ox, ys=ys, scale=scale)
+
+
+def read3(img, scale, last=None):
+    return p3.read_party_v3(img, ("default", scale), last)
+
+
+check("party v3: the answer's fields", p3.PartyLook._fields == ("count", "why", "scale", "box", "gone"))
+rng3 = np.random.default_rng(11)
+good = total = 0
+bad3 = []
+for scale, kernel in P3_SCALES:
+    for bg in (200, 235, 20, "busy"):
+        for n in (2, 3, 4, 5, 6):
+            ph = (float(rng3.random()), float(rng3.random())) if kernel == "bilinear" else (float(rng3.integers(0, 2)), float(rng3.integers(0, 2)))
+            img, info = fake_party(scale, kernel, n, bg, ph=ph, grey=(n - 1,) if n % 2 else ())
+            look = read3(img, scale)
+            total += 1
+            ok = look.count == n and look.why == "ok" and abs(look.scale - scale) < 0.01 and look.gone == 0
+            good += ok
+            if not ok:
+                bad3.append((scale, bg, n, look.count, look.why))
+check(f"party v3: lists of 2 to 6 rows are counted exactly at 1x, 1.406x, 1.875x, 2x and 2.8125x, over light, dark and busy "
+      f"backgrounds that touch the frames, in any sub-pixel position, grey rows too ({good}/{total}) {bad3[:3] or ''}", good == total)
+img, info = fake_party(1.40625, "bilinear", 4)
+keep = img.copy()
+look = read3(img, 1.40625)
+check("party v3: the picture is not changed and the same picture gives the same answer", (img == keep).all() and look == read3(img, 1.40625))
+bx, by, bw, bh = look.box
+check("party v3: the box is where the list is (its bars and panel lie inside it)",
+      bx <= info["ox"] * 1.40625 and bx + bw >= (info["ox"] + 72) * 1.40625 and by <= info["ys"][0] * 1.40625 and by + bh >= (info["ys"][-1] + 14) * 1.40625)
+for scale, kernel in ((1.0, "point"), (2.0, "point")):
+    img, _ = fake_party(scale, kernel, 5)
+    look = p3.read_party_v3(img)                                              # no hint at all: the scales of the window are tried
+    check(f"party v3: no hint needed at {scale}x (the window's own scales are tried)", look.count == 5 and look.why == "ok")
+
+
+# not a whole list: never a number
+def none_cases():
+    out = {}
+    for scale, kernel in ((1.0, "point"), (1.40625, "bilinear"), (2.8125, "bilinear")):
+        ox = 12 + 98
+        ys = [30 + 17 * k for k in range(5)]
+
+        def mk(n=5, **kw):
+            return fake_party(scale, kernel, n, **kw)[0]
+        out[scale] = {
+            "first row covered": mk(covers=((ox - 4, ys[0] - 3, ox + 76, ys[0] + 14, 120),)),
+            "last row covered": mk(covers=((ox - 4, ys[4] - 3, ox + 76, ys[4] + 22, 120),)),
+            "a middle row covered": mk(covers=((ox - 4, ys[2] - 3, ox + 76, ys[2] + 14, 120),)),
+            "the bottom rows covered": mk(covers=((ox - 20, ys[3] - 6, ox + 80, ys[4] + 30, 90),)),
+            "a black block (the overlay's window) between the rows": mk(covers=((ox + 8, ys[1] + 12, ox + 46, ys[1] + 16, 0),)),
+            "a black block across the bars": mk(covers=((ox - 4, ys[2] - 3, ox + 76, ys[2] + 14, 0),)),
+            "seven rows": mk(n=7),
+            "a lone bar": mk(n=1),
+            "a bar standing apart": mk(extra_bars=((20, 140),)),
+        }
+    return out
+
+
+bad = []
+for scale, cases in none_cases().items():
+    for name, img in cases.items():
+        look = read3(img, scale)
+        if look.count is not None or look.why != "unclear":
+            bad.append((scale, name, look.count, look.why))
+check(f"party v3: a row covered (first, last or middle), a pure-black block over the column, seven rows, a lone bar, a stray bar: "
+      f"None, 'unclear', never a number ({bad or 'all'})", not bad)
+bad = []
+for scale, kernel in P3_SCALES[:4]:
+    img, info = fake_party(scale, kernel, 4, covers=((0, 100, 8, 130, 0),))   # a black block far from the list: no matter
+    if read3(img, scale).count != 4:
+        bad.append(("far black block", scale))
+    img, info = fake_party(scale, kernel, 4, bg="busy", alien=(12 + 98 + 80, 30 + 17))   # a world HP bar beside the list, level with row 2
+    if read3(img, scale).count != 4:
+        bad.append(("world bar beside", scale))
+    img, info = fake_party(scale, kernel, 4, alien=(150, 140))
+    if read3(img, scale).count != 4:
+        bad.append(("world bar below", scale))
+    img, info = fake_party(scale, kernel, 0, bg="busy", alien=(60, 60))
+    look = read3(img, scale)
+    if look.count != 1 or look.why != "ok":
+        bad.append(("world bar alone", scale, look.count, look.why))
+check(f"party v3: a black block far from the list and a world HP bar (same frame and rim, another shape) change nothing ({bad or 'all'})", not bad)
+bad = []
+for scale, kernel in P3_SCALES:
+    for bg in (200, "busy", 20):
+        look = read3(fake_party(scale, kernel, 0, bg)[0], scale)
+        if look != p3.PartyLook(1, "ok", None, None, 0):
+            bad.append((scale, bg, look))
+check(f"party v3: no list is count 1, 'ok', no box ({bad or 'all'})", not bad)
+img, _ = fake_party(1.0, "point", 3, x0=12, y0=30)
+a = read3(img, 1.0)
+img2, _ = fake_party(1.0, "point", 5, x0=61, y0=17)
+b = read3(img2, 1.0, a)
+check("party v3: a list that moved and grew between two looks is found again (the last box is looked at first, then the whole window)",
+      a.count == 3 and b.count == 5 and b.gone == 0)
+img3, _ = fake_party(1.0, "point", 5, x0=12, y0=30)
+c = read3(img3, 1.0, b)
+check("party v3: and moved back", c.count == 5)
+
+# sizes the game does not offer but a fullscreen desktop can give (1.5625 = 1920x1200, 2.083 = 2560x1600, 3.0, 3.75 = 5K)
+bad = []
+for scale in (1.5625, 2.083, 3.0, 3.75):
+    for bg in (200, "busy"):
+        for n in (2, 4, 6):
+            img, _ = fake_party(scale, "bilinear", n, bg, ph=(0.31, 0.77))
+            look = read3(img, scale)
+            if look.count != n:
+                bad.append((scale, bg, n, look.count))
+check(f"party v3: lists are counted exactly at 1.5625x, 2.083x, 3x and 3.75x too ({bad or 'all'})", not bad)
+# a size just above 1x (a 1440 x 900 or 1600 x 900 desktop): the frame is under 1.35 pixels thick, a drawn bar says little.
+# It may say "unclear" there, never another number, and never "no list" for a picture that has one.
+bad = []
+for scale in (1.04, 1.1, 1.17, 1.25, 1.3):
+    for bg in (200, 120, "busy"):
+        for n in (0, 2, 4, 6):
+            img, _ = fake_party(scale, "bilinear", n, bg, ph=(0.55, 0.2))
+            look = read3(img, scale)
+            if look.count not in (n, None) and not (n == 0 and look.count == 1):
+                bad.append((scale, bg, n, look.count))
+            if n == 0 and look.count == 1:
+                bad.append((scale, bg, "no list at a weak size is claimed", look.count))
+check(f"party v3: just above 1x a picture is read right or called unclear, never a wrong number, and 'no list' is not claimed ({bad or 'all'})", not bad)
+
+# holding a party count: the state travels in `last`
+party = p3.PartyLook(4, "ok", 1.0, (10, 10, 190, 100), 0)
+nolist, _ = fake_party(1.0, "point", 0)
+covered, _ = fake_party(1.0, "point", 4, covers=((106, 78, 186, 103, 120),))       # the last row (and the panel line under it) hidden
+seq, last = [], party
+for i in range(p3.HOLD_LOOKS + 1):
+    last = read3(nolist, 1.0, last)
+    seq.append((last.count, last.why, last.gone))
+check(f"party v3: after a party of 4, no list at all keeps the 4 ('held') for {p3.HOLD_LOOKS - 1} looks, then you are alone: {seq}",
+      seq[:p3.HOLD_LOOKS - 1] == [(4, "held", i + 1) for i in range(p3.HOLD_LOOKS - 1)] and seq[p3.HOLD_LOOKS - 1:] == [(1, "ok", 0)] * 2)
+last, seq = party, []
+for i in range(3 * p3.HOLD_LOOKS):
+    last = read3(covered, 1.0, last)
+    seq.append((last.count, last.why))
+check("party v3: a list that can't be read (covered) keeps the count for as long as it lasts, however many looks",
+      set(seq) == {(4, "held")} and last.gone == 0)
+real, _ = fake_party(1.0, "point", 5)
+after = read3(real, 1.0, read3(nolist, 1.0, party))
+check("party v3: a list that comes back is read afresh and the wait starts over", after.count == 5 and after.why == "ok" and after.gone == 0)
+once = read3(covered, 1.0, None)
+check("party v3: unreadable with no party count before: None, 'unclear', not a guess", once.count is None and once.why == "unclear")
+check("party v3: after a count of 1 (alone) no list stays 1",
+      read3(nolist, 1.0, p3.PartyLook(1, "ok", None, None, 0)) == p3.PartyLook(1, "ok", None, None, 0))
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)
