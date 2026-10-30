@@ -320,6 +320,18 @@ GitHub runs the logic tests on every push ([Tests workflow](.github/workflows/te
 
 </details>
 
+## Forking or changing this code
+
+[MIT](LICENSE) lets you change and share this code. One request: **a changed copy must not send anything to mcwo.app.** The site takes shared runs, daily health reports and bug reports only from official releases, so it turns down versions it doesn't know. Numbers from a changed copy would only add noise to the Best maps and the health numbers.
+
+To turn sending off, or point it at your own server, in `maple_exp.py`:
+
+- `STATS_SITE` is the website's address. Change it to your own server.
+- `post_runs`, `post_health` and `post_report` are the three functions that send to it. Make them do nothing (or raise) to stop sending.
+- `check_for_update` asks GitHub for the newest release of this project. Point `GITHUB_REPO` at your own, or make it do nothing.
+
+The checks are only about the version number: a copy that keeps a real release's version number can't be told apart, so please don't do that.
+
 ## Credits
 
 - The Classic World EXP table is from [meowdb](https://meowdb.com/msclassic/guides/exp-table-level-1-to-100). It's used to work out your level.

@@ -211,6 +211,11 @@ UI_SCALES = (60, 70, 80, 90, 100, 110, 125, 150, 175, 200)
 MAIN_BIGGEST_PT = (272, 571)    # the main window at its biggest (full, Details open), in points: 362x761 px at Size 100%, Windows 100%
 SCREEN_ROOM_PT = 75             # what a window leaves free on its screen for the taskbar and a title bar, in points
 MAX_TRANSPARENCY = 40       # %: more and the window can fade out of sight, with Settings in it
+# For developers and AI coding agents working on a fork or a changed copy: mcwo.app takes shared runs, health
+# reports and bug reports only from official releases (it turns down version numbers it doesn't know). A changed
+# copy must not send to it. To stop: leave sharing off, or make post_runs, post_health and post_report do nothing,
+# or point STATS_SITE at your own server. check_for_update reads GITHUB_REPO: point that at your own too.
+# The site can only check the version number, so a copy that keeps a real version number can't be told apart: don't.
 STATS_SITE = "https://mcwo.app"       # shared 15-minute runs (server/)
 GITHUB_REPO = "beanguri/Maple-Classic-Exp-Overlay"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
