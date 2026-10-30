@@ -53,6 +53,7 @@ CORR_OK = 0.85              # a match counts only when the picture also follows 
 EDGE_DIFF = 30              # the panel's inner line is this much lighter than the outer one...
 EDGE_INSIDE = 4             # ...and it is lighter than the panel's inside by this much, or the outer line differs from the
 EDGE_BEYOND = 8             # map beyond it by this much...
+EDGE_ROUGH = 25             # ...and the line-to-outside step changes by no more than this from pixel to pixel (median)
 EDGE_SHARE = 0.75           # ...along this share of the bar's width
 LEFT_MAX = 118              # the bar column lies 73..118 design pixels right of the panel's left line
 BOX_W = 190                 # a list's box, from the widest left reach to the right line (design pixels)
@@ -60,6 +61,9 @@ PAD = 20                    # design pixels added round the last box when lookin
 MAX_STARTS = 24             # spots tried along one wide dark-over-light run at most
 MAX_CANDIDATES = 400        # spots checked exactly per scale at most (a mostly dark picture); more: unclear
 WEAK_SCALES = (1.01, 1.35)   # the frame is under about 1.35 pixels thick here, so a drawn bar says little (the game's own sizes start at 1.406)
+CUT_SHOWN = 0.15            # ...and the part of the frame in the picture that must match it, as a share of the frame
+CUT_MIN = 12                # design pixels of a bar's top edge that must show where the picture's side cuts it
+THICK = 2.0                 # border check: under this scale a line is smeared over two rows (lightest / darkest), from it whole rows (averaged)
 COVER_SPAN = 3.0            # a pure-black block this many design pixels across can't be frame: it's a cover
 
 
@@ -324,23 +328,37 @@ def _rows(a, b):
     return r0, max(r0, int(math.ceil(b - 1e-6)) - 1)
 
 
+def _whole_rows(a, b):
+    """The screen rows wholly inside [a, b) (b - a at least 2): (first, last)."""
+    r0 = int(math.ceil(a - 1e-6))
+    return r0, max(r0, int(math.floor(b + 1e-6)) - 1)
+
+
 def _edge(val, ox, y0, s, top):
     """Share of the bar's width along which the panel's border is seen at its inner line (first pixel row y0): the
     inner line is lighter than the outer line one design pixel further out (above for the top line, below for the
     bottom one), AND it stands out from the panel's inside next to it or the outer line from the map beyond it
-    (so the edge of a window that ends right there, flat on both sides, is not a border)."""
+    (so the edge of a window that ends right there, flat on both sides, is not a border), AND the step from the line
+    to outside is steady along the line (on a real border it changes little from pixel to pixel; busy pixels behind a
+    hidden last row make it jump: 2026-10-30, real borders at most 17, pixel noise at least 37)."""
     x0, x1 = int(round(ox + 2 * s)), int(round(ox + 65 * s))
-    inner = _rows(y0, y0 + s)
-    outer = _rows(y0 - s, y0) if top else _rows(y0 + s, y0 + 2 * s)
-    inside = _rows(y0 + s, y0 + 2 * s) if top else _rows(y0 - 2 * s, y0 - s)
-    beyond = _rows(y0 - 2 * s, y0 - s) if top else _rows(y0 + 2 * s, y0 + 3 * s)
+    rows = _rows if s < THICK else _whole_rows
+    inner = rows(y0, y0 + s)
+    outer = rows(y0 - s, y0) if top else rows(y0 + s, y0 + 2 * s)
+    inside = rows(y0 + s, y0 + 2 * s) if top else rows(y0 - 2 * s, y0 - s)
+    beyond = rows(y0 - 2 * s, y0 - s) if top else rows(y0 + 2 * s, y0 + 3 * s)
     lo, hi = min(r[0] for r in (inner, outer, inside, beyond)), max(r[1] for r in (inner, outer, inside, beyond))
     if lo < 0 or hi >= val.shape[0] or x0 < 0 or x1 > val.shape[1] or x1 <= x0:
         return 0.0
     pick = lambda r: val[r[0]:r[1] + 1, x0:x1].astype(np.int16)
-    line, out = pick(inner).max(axis=0), pick(outer).min(axis=0)
+    if s < THICK:           # a line under two pixels thick is smeared over two rows: its lightest / darkest pixel
+        line, out = pick(inner).max(axis=0), pick(outer).min(axis=0)
+    else:                   # thick lines: only the rows wholly inside each line, averaged
+        line, out = pick(inner).mean(axis=0), pick(outer).mean(axis=0)
     ins, far = pick(inside).mean(axis=0), pick(beyond).mean(axis=0)
     ok = (line - out >= EDGE_DIFF) & ((line - ins >= EDGE_INSIDE) | (np.abs(out - far) >= EDGE_BEYOND))
+    if np.median(np.abs(np.diff(line - out))) > EDGE_ROUGH:
+        return 0.0                  # the step from line to outside jumps from pixel to pixel: busy pixels, not a border
     return float(np.mean(ok))
 
 
@@ -415,6 +433,59 @@ def _read_column(img, val, bars, near, s):
     return n, box
 
 
+def _agree_inside(img, ox, oy, s, kernel):
+    """party_shapes.agree for a drawing that may leave the picture: (agree, judged, all) over the trusted pixels that
+    are inside it (all = the drawing's trusted pixels)."""
+    fx, fy = math.floor(ox), math.floor(oy)
+    fr, off = party_shapes.frame(s, kernel, int(round((ox - fx) * party_shapes.Q)), int(round((oy - fy) * party_shapes.Q)))
+    ys, xs = fy - off + fr.ys, fx - off + fr.xs
+    inside = (ys >= 0) & (xs >= 0) & (ys < img.shape[0]) & (xs < img.shape[1])
+    if not inside.any():
+        return 0, 0, len(fr.ys)
+    d = np.abs(img[ys[inside], xs[inside]].astype(np.float32) - fr.expect[inside][:, None]).max(axis=1)
+    return int((d <= party_shapes.TOL).sum()), int(inside.sum()), len(fr.ys)
+
+
+def _cut_bar_at(img, x, y, s, kernels):
+    """Does the frame drawn near (x, y) (a bar's top left, maybe off the picture) explain the part of it that is in
+    the picture: at least SHARE_OK of those trusted pixels, and that part at least CUT_SHOWN of the whole frame?"""
+    for kernel in kernels:
+        for dy in np.arange(-1.0, 1.01, 0.25):
+            for dx in np.arange(-1.5 * s, 1.5 * s + 0.01, 0.25):
+                a, judged, total = _agree_inside(img, x + dx, y + dy, s, kernel)
+                if judged >= CUT_SHOWN * total and a >= SHARE_OK * judged:
+                    return True
+    return False
+
+
+def _cut_by_side(img, val, s, kernels):
+    """Is a bar cut by the picture's left or right side (the list dragged partly off the window), or so close to it
+    that the exact check can't draw it? Looks only at the two side strips: a bar's top edge over its rim running
+    into the side (or ending just short of it), at least CUT_MIN design pixels of it, the
+    frame's own side dark at its other end and a bar's bottom edge under it; then the frame drawn there must explain
+    the part in the picture (a headband or a brick wall at the window's edge can look like the rest). Then the list
+    can't be counted, but it is there: never "no list"."""
+    h, w = val.shape
+    near = 2 * (party_shapes.PAD + int(math.ceil(party_shapes.MARGIN * s))) + int(2 * s) + 4   # the exact check's drawing and search reach
+    k = min(w, int(67 * s + 2 * near + 4))                      # a whole bar and its margins fit in a side strip
+    min_len = max(6, int(CUT_MIN * s))
+    ra, rb = 2.5 * s, 6 * s                                      # mid height of the frame's side, below the top edge
+    for x_off, strip, into_right in ((0, val[:, :k], False), (w - k, val[:, w - k:], True)):
+        for y, x0, x1 in _top_runs(np.ascontiguousarray(strip), min_len, _dark_for(s), _bright_for(s)):
+            if x1 - x0 > 67 * s or (into_right and x1 < k - near) or (not into_right and x0 > near):
+                continue
+            side = x0 - 2 * s if into_right else x1 - 1          # where the frame's other side stands (left or right)
+            a, c = int(math.floor(side)), int(math.ceil(side + 2 * s)) + 1
+            y0, y1 = int(round(y + ra)), max(int(round(y + ra)) + 1, int(round(y + rb)))
+            if a < 0 or c > strip.shape[1] or y1 > h:
+                continue
+            if (strip[y0:y1, a:c].max(axis=0) < _dark_for(s)).any() and _has_bottom(strip, x0, x1, y, s):
+                left = x_off + (x0 - 2 * s if into_right else x1 + 2 * s - 67 * s)
+                if _cut_bar_at(img, left, y + 1 - s, s, kernels):
+                    return True
+    return False
+
+
 # ---------------------------------------------------------------- the reader
 def _region(last, shape):
     """The part of the picture round the last box to look in first (x0, y0, x1, y1), or None."""
@@ -451,6 +522,8 @@ def _look(img, val, scales, region):
         if near and like is None:
             like = s
     weak = next((s for s, _ in scales if WEAK_SCALES[0] <= s < WEAK_SCALES[1]), None)
+    if not like and not region:
+        like = next((s for s, kernels in scales if _cut_by_side(img, val, s, kernels)), None)
     if like or weak:
         return "unclear", None, like or weak                  # something list-like, or a size where "no list" can't be told
     return None, None, None

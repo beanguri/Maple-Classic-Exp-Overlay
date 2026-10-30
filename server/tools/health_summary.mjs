@@ -83,6 +83,11 @@ const num = (n) => Number(n || 0).toLocaleString("en-US");
 const sizeName = (r) => (r.w == null ? "game not found" : `${r.w}x${r.h} ${r.fs ? "fullscreen" : "windowed"}`);
 
 /** Adds up groups that share a key. */
+/** Which reader is behind the party shadow in a version: v2 in 0.9.14, v3 from the next version on. */
+export function partyReader(version) {
+  return /^0\.9\.(\d|1[0-4])(\D|$)/.test(String(version)) ? "reader v2" : "reader v3";
+}
+
 function rollup(rows, keyOf) {
   const out = new Map();
   for (const r of rows) {
@@ -161,11 +166,18 @@ export function summarize(data, dayCount) {
     ? `   UI size: Default ${num(total.ui_default)} (${pct(total.ui_default, uiMode)}), Ideal ${num(total.ui_ideal)} (${pct(total.ui_ideal, uiMode)});` +
       ` layout: keyboard ${num(total.ui_kb)} (${pct(total.ui_kb, uiLay)}), controller ${num(total.ui_ctl)} (${pct(total.ui_ctl, uiLay)})`
     : "   no UI size or layout data yet");
-  for (const [name, c, ms, lk] of [["mesos", "shm", "ms_mes_w", "mes_looks"], ["party size", "shp", "ms_par_w", "par_looks"]]) {
-    const f = Object.fromEntries(SHADOW_FIELDS.map(([, a]) => [a, total[`${c}_${a}`]]));
-    if (!Object.values(f).some((v) => v)) { out.push(`   ${name}: no shadow data yet`); continue; }
+  const shadowLine = (name, t, c, ms, lk) => {
+    const f = Object.fromEntries(SHADOW_FIELDS.map(([, a]) => [a, t[`${c}_${a}`]]));
+    if (!Object.values(f).some((v) => v)) return false;
     out.push(`   ${name}: agree ${num(f.agree)}, disagree ${num(f.dis)}, v2 only ${num(f.v2only)}, old only ${num(f.oldonly)}, ` +
-      `neither ${num(f.neither)}, skipped ${num(f.skipped)}, errors ${num(f.err)}; ms per look ${total[lk] ? (total[ms] / total[lk]).toFixed(1) : "-"}`);
+      `neither ${num(f.neither)}, skipped ${num(f.skipped)}, errors ${num(f.err)}; ms per look ${t[lk] ? (t[ms] / t[lk]).toFixed(1) : "-"}`);
+    return true;
+  };
+  if (!shadowLine("mesos", total, "shm", "ms_mes_w", "mes_looks")) out.push("   mesos: no shadow data yet");
+  // The party shadow is reader v2 in 0.9.14 and reader v3 after it (same keys): one line per version, never added up.
+  const partyRows = rollup(g, (r) => r.v).sort((a, b) => String(a.key).localeCompare(String(b.key)));
+  if (!partyRows.filter((t) => shadowLine(`party size, ${t.key} (${partyReader(t.key)})`, t, "shp", "ms_par_w", "par_looks")).length) {
+    out.push("   party size: no shadow data yet");
   }
 
   // 7. Worst installs.
@@ -184,8 +196,9 @@ export function summarize(data, dayCount) {
   }
   const bad = tess.filter((t) => t.key !== "ok" && t.players > 0);
   for (const t of bad) notes.push(`Tesseract "${t.key}" on ${num(t.players)} players`);
-  for (const [name, c] of [["mesos", "shm"], ["party size", "shp"]]) {
-    if (total[c + "_dis"] > 0) notes.push(`${name} shadow disagreed ${num(total[c + "_dis"])} times: check these first`);
+  if (total.shm_dis > 0) notes.push(`mesos shadow disagreed ${num(total.shm_dis)} times: check these first`);
+  for (const t of rollup(g, (r) => r.v)) {
+    if (t.shp_dis > 0) notes.push(`party size shadow (${partyReader(t.key)}, ${t.key}) disagreed ${num(t.shp_dis)} times: check these first`);
   }
   if (total.sh_dis > 0) notes.push(`shadow mode disagreed ${num(total.sh_dis)} times: check these first`);
   out.push(...(notes.length ? notes.map((n) => "   - " + n) : ["   - nothing stands out"]));

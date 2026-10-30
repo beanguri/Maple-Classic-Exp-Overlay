@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import maple_exp as m  # noqa: E402
-import party_v2  # noqa: E402
+import party_v3  # noqa: E402
 assert Path(os.environ["MAPLE_EXP_DATA"]) == m.DATA_DIR, "tests must run on their own temp data folder, never on real data"
 
 FRAMES = Path(__file__).parent / "frames"
@@ -611,48 +611,53 @@ for key, info in sorted(PARTS["party"].items(), key=lambda kv: kv[1]["gh"]):
     check(f"party size right, EXP digits {gh:.0f} px: {total - len(wrong)}/{total} "
           f"({', '.join(wrong[:5]) or 'all right'})", not wrong)
 
-    # reader v2 (party_v2): the same pictures, found by the bars' shape at the window's UI scale, no EXP digit height
-    scale = {7: 1.0, 11: 1080 / 768, 28: 3.75}[round(gh)]
-    wrong, total, unclear = [], 0, 0
-    for members in range(1, 7):
-        h = pitch * (members - 1) + rh
-        for bg_name, bg in backgrounds(h + int(6 * gh), rw + int(8 * gh)).items():
-            img = bg.copy()
-            ox, oy = rnd.randint(0, img.shape[1] - rw), rnd.randint(0, img.shape[0] - h)
-            for i in range(members):
-                row = rows[i % len(rows)]
-                region = img[oy + i * pitch:oy + i * pitch + rh, ox:ox + rw]
-                a = row[..., 3:] / 255.0
-                region[:] = (row[..., :3] * a + region * (1 - a)).astype(np.uint8)
-            for hint in (None, ("default", scale)) if gh <= 7 else (("default", scale),):
-                got = party_v2.read_party_v2(img, hint)
+    # reader v3 (party_v3): only rows whose bar has the game's shape (gh 7 = 1x, gh 28 = 3.75x; the gh 11 row was made
+    # at another size: its bar is 72 design pixels wide, the game's 67), one row repeated at the game's row pitch (17
+    # design pixels). Cut out, with no panel lines round them, so v3 calls a whole list unclear here (it wants the
+    # panel's border); what is checked is that it never gives a wrong size. The full checks are in test_v2.py.
+    if round(gh) in (7, 28):
+        scale = {7: 1.0, 28: 3.75}[round(gh)]
+        gpitch = int(round(17 * scale))
+        wrong, total, unclear = [], 0, 0
+        for members in range(1, 7):
+            h = gpitch * (members - 1) + rh
+            for bg_name, bg in backgrounds(h + int(6 * gh), rw + int(8 * gh)).items():
+                img = bg.copy()
+                ox, oy = rnd.randint(0, img.shape[1] - rw), rnd.randint(0, img.shape[0] - h)
+                for i in range(members):
+                    region = img[oy + i * gpitch:oy + i * gpitch + rh, ox:ox + rw]
+                    a = rows[0][..., 3:] / 255.0
+                    region[:] = (rows[0][..., :3] * a + region * (1 - a)).astype(np.uint8)
+                got = party_v3.read_party_v3(img, ("default", scale))
                 total += 1
                 unclear += got.count is None
                 if got.count is not None and got.count != members:
                     wrong.append(f"{members} as {got.count} on {bg_name}")
-    check(f"party v2: no wrong size, EXP digits {gh:.0f} px ({total - len(wrong) - unclear} right, {unclear} unclear of {total})"
-          f" {', '.join(wrong[:5])}", not wrong)
+        check(f"party v3: no wrong size, EXP digits {gh:.0f} px ({total - len(wrong) - unclear} right, {unclear} unclear of {total})"
+              f" {', '.join(wrong[:5])}", not wrong)
     clean = all(len(m.find_party_bars(bg, gh)) <= 1 for bg in backgrounds(900, 1400).values())
     check(f"no party list on screen means solo, EXP digits {gh:.0f} px", clean)
-    check(f"party v2: no list on screen means solo, EXP digits {gh:.0f} px",
-          all(party_v2.read_party_v2(bg).count == 1 for bg in backgrounds(900, 1400).values()))
+check("party v3: no list on screen means solo (a game-sized picture: at 900 px tall v3 can't tell, by design)",
+      all(party_v3.read_party_v3(bg).count == 1 for bg in backgrounds(1080, 1400).values()))
 
-# ---- party v2 on a window-sized picture, no hint: the UI scale is found by itself; wired as a shadow part
-_row = cv2.imread(str(FRAMES / "party_row_gh11_0.png"), cv2.IMREAD_UNCHANGED)
-_win = np.full((1080, 1920, 3), 60, np.uint8)
+# ---- party v3 on a window-sized picture (1366 x 768, UI 1x), no hint, wired as the party shadow part
+_row = cv2.imread(str(FRAMES / "party_row_gh7_0.png"), cv2.IMREAD_UNCHANGED)
+_win = np.full((768, 1366, 3), 60, np.uint8)
 for i in range(4):
     _a = _row[..., 3:] / 255.0
-    _reg = _win[700 + i * 25:700 + i * 25 + _row.shape[0], 1500:1500 + _row.shape[1]]
+    _reg = _win[300 + i * 17:300 + i * 17 + _row.shape[0], 900:900 + _row.shape[1]]
     _reg[:] = (_row[..., :3] * _a + _reg * (1 - _a)).astype(np.uint8)
-_look = party_v2.read_party_v2(_win)
-check(f"party v2 finds 4 members on a 1080p window with no hint ({_look})", _look.count == 4 and _look.why == "ok")
-_look2 = party_v2.read_party_v2(_win, None, _look)
-check("...and again with its last look", _look2.count == 4)
-_win[700 + 25:700 + 25 + _row.shape[0], 1500:1500 + _row.shape[1]] = 60     # (a bar gone from the middle of the list)
+_look = party_v3.read_party_v3(_win)
+check(f"party v3 on cut-out rows (no panel lines): 4 or unclear, never another number ({_look})", _look.count in (4, None))
+_win[300 + 17:300 + 17 + _row.shape[0], 900:900 + _row.shape[1]] = 60     # (a bar gone from the middle of the list)
 _rdr = m.ScreenReader(m.DigitTemplates.load())
-_rdr.gh = 11.0
-check("party v2 through the reader: a gap in the list is unclear, never a number",
-      _rdr._party_v2(_win, cv2.cvtColor(_win, cv2.COLOR_BGR2HSV), 1080)[0] is None)
+_rdr.gh = 7.0
+check("party v3 through the reader: a gap in the list is unclear, never a number",
+      _rdr._party_v3(_win, cv2.cvtColor(_win, cv2.COLOR_BGR2HSV), 768)[0] is None)
+_rdr._party_last = party_v3.PartyLook(4, "ok", 1.0, (800, 290, 190, 80), 0)
+check("party v3 through the reader: a held count goes to the shadow as unclear (not read this look)",
+      _rdr._party_v3(np.full((768, 1366, 3), 60, np.uint8), None, 768) == (None, "unclear")
+      and _rdr._party_last.why == "held" and _rdr._party_last.count == 4)
 
 # ---- the class, from the status bar (the character name line is blanked in these)
 _tess = m.find_tesseract()

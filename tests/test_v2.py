@@ -576,6 +576,33 @@ for scale, cases in none_cases().items():
 check(f"party v3: a row covered (first, last or middle), a pure-black block over the column, seven rows, a lone bar, a stray bar: "
       f"None, 'unclear', never a number ({bad or 'all'})", not bad)
 bad = []
+for scale, kernel in ((1.40625, "bilinear"), (1.875, "bilinear"), (2.0, "point"), (2.8125, "bilinear"), (3.75, "bilinear")):
+    for seed in range(12):
+        img, info = fake_party(scale, kernel, 5, seed=seed)
+        g = np.random.default_rng(seed)
+        y = int((info["ys"][3] - 3) * scale)                     # rows 4 and 5 hidden by something opaque and busy (screen noise)
+        x0, x1 = int((info["ox"] - 30) * scale), int((info["ox"] + 80) * scale)
+        img[y:, x0:x1] = g.integers(0, 256, (img.shape[0] - y, x1 - x0, 3))
+        look = read3(img, scale)
+        if look.count is not None:
+            bad.append((scale, seed, look.count))
+check(f"party v3: the bottom rows hidden by something busy (pixel noise) at 1.406x-3.75x: never a number, not even the rows above "
+      f"({bad or 'all'})", not bad)
+bad = []
+for scale, kernel in ((1.0, "point"), (1.40625, "bilinear"), (2.8125, "bilinear")):
+    img, info = fake_party(scale, kernel, 5)
+    ox, ys = info["ox"], info["ys"]
+    cuts = {"the bars cut by the picture's right edge": img[:, :int((ox + 40) * scale)],
+            "the bars ending just short of the picture's right edge": img[:, :int((ox + 69) * scale)],
+            "the list cut by the picture's bottom edge": img[:int((ys[3] + 5) * scale)]}
+    party = p3.PartyLook(5, "ok", scale, (0, 0, 10, 10), 0)
+    for name, cut in cuts.items():
+        alone, held = read3(np.ascontiguousarray(cut), scale), read3(np.ascontiguousarray(cut), scale, party)
+        if alone.count is not None or (held.count, held.why) != (5, "held"):
+            bad.append((scale, name, alone, held))
+check(f"party v3: a list partly off the picture (the owner can drag it there) is unclear, or the party count held; never "
+      f"alone or fewer ({bad or 'all'})", not bad)
+bad = []
 for scale, kernel in P3_SCALES[:4]:
     img, info = fake_party(scale, kernel, 4, covers=((0, 100, 8, 130, 0),))   # a black block far from the list: no matter
     if read3(img, scale).count != 4:
