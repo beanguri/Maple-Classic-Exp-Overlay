@@ -1328,6 +1328,36 @@ try:
                   len(posted) == 2 and "sent 3 reports today" in d2.status.cget("text"))
         d2.destroy()
 
+    # B03: the number the site gave is shown with the two ways to reach the developer; without it, no number
+    for number, expect in ((17, True), (None, False)):
+        app.cfg["reports_sent"] = {"day": "2000-01-01", "n": 0}
+        before = set(app.root.winfo_children())
+        app.send_report()
+        root.update()
+        d5 = new_windows(before)[0]
+        done = m.ReportOutcome("ok")
+        done.n = number
+        app._report_done(d5, done)
+        root.update()
+        text = d5.status.cget("text")
+        check(f"a sent report {'#17 shows its number and Want a reply?' if expect else 'without a number shows none'}",
+              ("report #17" in text and "Want a reply" in text) == expect and "Sent, thank you" in text)
+        check(f"...{'with a GitHub issues and a Reddit button' if expect else 'and no extra buttons'}",
+              (button(d5, "GitHub issues") != [] and button(d5, "Reddit") != []) == expect)
+        if expect:
+            opened = []
+            real_open = m.webbrowser.open
+            m.webbrowser.open = lambda url, *a, **k: opened.append(url)
+            try:
+                check("...nothing opens until a click", not opened)
+                button(d5, "Reddit")[0].command()
+                button(d5, "GitHub issues")[0].command()
+            finally:
+                m.webbrowser.open = real_open
+            check("...Reddit opens the owner's page, GitHub issues the repo's", opened == [m.REPORT_REDDIT, f"https://github.com/{m.GITHUB_REPO}/issues"])
+        d5.destroy()
+    app.cfg.pop("reports_sent", None)
+
     for outcome, words in (("later", "connected to the internet"), ("message", "leave out links"), ("limit", "sent 3 reports")):
         app.cfg["reports_sent"] = {"day": "2000-01-01", "n": 0}
         before = set(app.root.winfo_children())

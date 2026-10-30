@@ -548,10 +548,16 @@ def reports_sent_today(cfg, now=None):
     return sent["n"] if isinstance(sent, dict) and sent.get("day") == today else 0
 
 
+class ReportOutcome(str):
+    """What post_report answers: a plain word ('ok', ...) that also carries the report's number `n` (None when the
+    site didn't say: an older server)."""
+    n = None
+
+
 def post_report(body, timeout=15):
-    """Sends one Send report (report.report_body) to the stats site. Returns 'ok', 'limit' (3 a day),
-    'message' (the site doesn't like the typed text), 'bad' (refused for another reason, or too large)
-    or 'later' (a network problem or the site is down)."""
+    """Sends one Send report (report.report_body) to the stats site. Returns 'ok' (with .n, the report's number),
+    'limit' (3 a day), 'message' (the site doesn't like the typed text), 'bad' (refused for another reason, or too
+    large) or 'later' (a network problem or the site is down)."""
     if sharing_blocked():
         raise RuntimeError("Send report is off while testing (MAPLE_EXP_DATA is set)")
     request = urllib.request.Request(f"{STATS_SITE}/api/report", data=report.encode_body(body), headers={
@@ -559,7 +565,12 @@ def post_report(body, timeout=15):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = json.loads(response.read(10_000).decode("utf-8"))
-        return "ok" if isinstance(data, dict) and data.get("ok") else "later"
+        if not (isinstance(data, dict) and data.get("ok")):
+            return "later"
+        outcome = ReportOutcome("ok")
+        n = data.get("n")
+        outcome.n = n if type(n) is int and n > 0 else None
+        return outcome
     except urllib.error.HTTPError as e:
         if e.code == 429:
             return "limit"
@@ -4247,6 +4258,7 @@ def fmt_num(n):
     return "—" if n is None else f"{n:,.0f}"
 
 
+REPORT_REDDIT = "https://www.reddit.com/user/Lurkerdesune/"      # where a Send report's number can be given for a private reply
 POTION_UNSEEN_AFTER = 60        # seconds tracking runs without a look at the potion bar before the cost line says so
 REPORT_SCREEN_SECONDS = 300     # a bug report's whole-game picture is deleted this long after the report page opened
 
@@ -4405,6 +4417,7 @@ class App:
         self.settings_win = self.prices_win = None
         self._price_table = None
         self._potion_unseen = None          # since when (monotonic) tracking runs and the potion bar isn't in sight
+        self._bar_unseen_since = None       # since when the potion bar hasn't been seen, tracking or not (bug reports)
         self.q = queue.Queue()
         self.stop_evt = threading.Event()
         self.last_capture = None
@@ -5814,6 +5827,7 @@ class App:
             save_config(self.cfg)
         if r.bar is not None:
             self.potion_bar = r.bar
+            self._bar_unseen_since = None if r.bar.seen else (self._bar_unseen_since or now)
             if self.cfg["potions_on"]:
                 self.session.look_at_bar(r.bar, now, r.window)
             else:
@@ -6476,6 +6490,7 @@ class App:
         w.status.pack(anchor="w", pady=(th.px(6), 0))
         buttons = tk.Frame(w, bg=BG)
         buttons.pack(fill="x", pady=(th.px(10), 0))
+        w.buttons = buttons
         w.cancel_button = Button(buttons, th, text="Cancel", kind="secondary", width=96, height=38, radius=11, size=12,
                                  command=w.destroy, bg=BG)
         w.cancel_button.pack(side="right")
@@ -6524,8 +6539,19 @@ class App:
                  "later": "Couldn't send it. Are you connected to the internet?"}
         if outcome == "ok":
             self._count_report()
-            w.status.configure(text="Sent, thank you!", fg=GOOD)
+            n = getattr(outcome, "n", None)
+            w.status.configure(text="Sent, thank you!" + (f" This is report #{n}. Want a reply? Open a GitHub issue or "
+                                                           "message me on Reddit and give the number." if n else ""), fg=GOOD)
             w.cancel_button.set(text="Close")
+            if n:
+                th = self.theme
+                row = tk.Frame(w, bg=BG)
+                row.pack(fill="x", pady=(th.px(8), 0), before=w.buttons)
+                for text, url in (("GitHub issues", f"https://github.com/{GITHUB_REPO}/issues"), ("Reddit", REPORT_REDDIT)):
+                    b = Button(row, th, text=text, kind="secondary", width=130, height=34, radius=10, size=11,
+                               command=lambda url=url: webbrowser.open(url), bg=BG)
+                    b.pack(side="left", padx=(0, th.px(8)))
+                    setattr(w, "open_" + text.split()[0].lower(), b)
             return
         if outcome == "limit":
             self.cfg["reports_sent"] = {"day": healthlog.utc_day(time.time()), "n": MAX_REPORTS_PER_DAY}
@@ -6595,7 +6621,7 @@ class App:
                        "last_ms": h.last_ms, "age": None if h.last_at is None else now - h.last_at},
             "rejected": self.rejected, "status": self.status.get().replace("\n", " | "),
             "last_exp": r.text if r else None, "level": self.level, "job": self.job, "map": self.map_name,
-            "party": party_label(self.party),
+            "party": party_label(self.party), "potions": self._potion_facts(now),
             "mesos": fmt_num(self.meso.value) if self.meso.value is not None else None, "tracking": bool(self.session.on),
             "tracker": f"paused: {self.session.waiting or 'no'}, gained {fmt_num(t.gained)} EXP in {fmt_dur(t.elapsed())}",
             "settings": {"mode": self.reader.mode, **{k: self.cfg.get(k) for k in ("gap_seconds", "transparency", "topmost", "ui_scale",
@@ -6603,6 +6629,22 @@ class App:
                          "share_health": self.cfg.get("share_health"), "health_last_sent": self.healthlog.last_sent or None},
             "timeline": [self._private(x) for x in self.recent.lines()], "errors": errors,
         }
+
+    def _potion_facts(self, now):
+        """The potion bar's part of a bug report: what the last look saw, slot by slot, and the cost row as shown.
+        Only shipped item names go in (a custom price's name can be any text the player typed)."""
+        if not self.cfg["potions_on"]:
+            return {"on": False}
+        bar = self.potion_bar
+        table = self._potion_table()
+        shipped = set(table.prices) if table else set()
+        slots = [{"index": s.index, "item": s.item if s.item in shipped else None, "kind": s.kind, "count": s.count,
+                  "dist": None if s.dist is None else round(s.dist, 2), "dropped": s.dropped} for s in bar.slots]
+        unseen = self._bar_unseen_since
+        return {"on": True, "seen": bar.seen, "unseen_for": now - unseen if unseen and not bar.seen else None,
+                "layout": bar.layout, "mode": bar.mode, "scale": round(bar.scale, 2) if bar.scale else None,
+                "cost_text": self._potion_cost_text(now), "slots": slots,
+                "own_prices": sorted(n for n in self.cfg["potion_prices"] if n in shipped)}
 
     def _worker_alive(self):
         return getattr(self, "_worker_thread", None) is None or self._worker_thread.is_alive()

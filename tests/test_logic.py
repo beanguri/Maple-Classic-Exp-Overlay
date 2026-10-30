@@ -515,7 +515,7 @@ check("runs never carry a note, even with notes on the log lines",
       all("note" not in r for r in log.runs) and "MY-PRIVATE-NOTE" not in json.dumps(log.runs))
 src = inspect.getsource(m)
 check("privacy guard: the overlay reaches the internet in exactly these places (a new one needs a look at what it sends)",
-      src.count("urlopen(") == 4 and src.count("webbrowser.open(") == 3 and "requests." not in src and "socket." not in src)
+      src.count("urlopen(") == 4 and src.count("webbrowser.open(") == 4 and "requests." not in src and "socket." not in src)
 check("Send report never reads the log, notes or the map",
       not any(w in inspect.getsource(x) for x in (m.post_report, m.App.send_report, m.App._submit_report, m.App._report_details)
               for w in ("entries", "autolog", "note_of", "notes_of", '"note"', "map_name")))

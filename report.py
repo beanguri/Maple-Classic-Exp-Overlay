@@ -85,11 +85,9 @@ def looks_wrong(f, now=None):
         out.append("The game window is minimized.")
     mons = f.get("monitors") or []
     rect = game.get("rect")
-    if rect and mons:
-        big = max(mons, key=lambda m: m[0] * m[1])
-        if rect[2] > big[0] + 8 or rect[3] > big[1] + 8:
-            out.append(f"The game window ({rect[2]}x{rect[3]}) is bigger than the biggest screen "
-                       f"({big[0]}x{big[1]}): Windows scaling may be making the overlay look at the wrong size.")
+    if rect and mons and not any(rect[2] <= m[0] + 8 and rect[3] <= m[1] + 8 for m in mons):     # (fits on no screen)
+        out.append(f"The game window ({rect[2]}x{rect[3]}) is bigger than every screen "
+                   f"({', '.join(f'{m[0]}x{m[1]}' for m in mons)}): Windows scaling may be making the overlay look at the wrong size.")
     if f.get("dpi_awareness") in ("not aware", "system"):
         out.append(f"The overlay isn't fully aware of Windows scaling ({f['dpi_awareness']}): "
                    "pictures of the screen may be the wrong size on a scaled or second screen.")
@@ -136,6 +134,50 @@ def _box(b):
     return "not found" if not b else "x{} y{} {}x{}".format(*(int(v) for v in b))
 
 
+def potion_lines(p):
+    """The "Potions" part of the details: whether the bar was seen, what each slot read and why a count was dropped.
+    `p` is App._report_facts' potion facts. Item names come from the shipped table only (nothing the player typed)."""
+    if not p:
+        return [_kv("Potions", "no facts")]
+    if not p.get("on"):
+        return [_kv("Potions", "off in Settings")]
+    since = p.get("unseen_for")
+    seen = ("yes" if p.get("seen") else "no") + (f", not seen for {clock(since)[1:]}" if since else "")
+    out = [_kv("Bar seen", seen),
+           _kv("Layout", f"{p.get('layout') or '?'}, UI size {p.get('mode') or 'same in both'}, scale {p.get('scale') or '?'}"),
+           _kv("Cost row shows", p.get("cost_text") or "?")]
+    slots = p.get("slots") or []
+    for s in slots:
+        if s.get("kind") != "consumable":
+            continue
+        if s.get("dropped"):
+            why = "count dropped (icon too far from the item)"
+        elif s.get("count") is None:
+            why = "count not read"
+        else:
+            why = f"count {s['count']}"
+        dist = "?" if s.get("dist") is None else f"{s['dist']:.2f}"
+        out.append(_kv(f"Slot {s.get('index')}", f"{s.get('item') or 'unknown item'}, {why}, icon distance {dist}"))
+    others = {}
+    for s in slots:
+        if s.get("kind") != "consumable":
+            others[s.get("kind") or "unknown"] = others.get(s.get("kind") or "unknown", 0) + 1
+    out.append(_kv("Other slots", ", ".join(f"{k} {n}" for k, n in sorted(others.items())) or "none"))
+    out.append(_kv("Shipped items with your own price", ", ".join(p.get("own_prices") or []) or "none"))
+    return out
+
+
+def potion_summary(p):
+    """One line for the short GitHub summary."""
+    if not p or not p.get("on"):
+        return "off" if p else "no facts"
+    if not p.get("seen"):
+        return "bar not seen"
+    cons = [s for s in p.get("slots") or [] if s.get("kind") == "consumable"]
+    read = sum(s.get("count") is not None for s in cons)
+    return f"bar seen, {p.get('layout')}, {read} of {len(cons)} counts read"
+
+
 def summary(f):
     """The short version that goes into the GitHub issue's text (the address has a size limit)."""
     g, h = f.get("game") or {}, f.get("health") or {}
@@ -152,6 +194,7 @@ def summary(f):
                                            f"{f.get('map') or 'not read'} / {f.get('party')}"),
         _kv("Mesos", f"{f.get('mesos') if f.get('mesos') is not None else 'not read'}"),
         _kv("Tracking", f"{'on' if f.get('tracking') else 'off'}, {f.get('tracker')}"),
+        _kv("Potions", potion_summary(f.get("potions"))),
         _kv("Status", f.get("status") or ""),
         _kv("Reading thread", f"{h.get('polls', 0)} looks, {h.get('errors', 0)} failed, "
                               f"{int(h.get('average_ms') or 0)} ms each, last {int(h.get('age')) if h.get('age') is not None else '?'} s ago, "
@@ -238,6 +281,7 @@ def details(f):
             _kv("Time per look", f"{int(h.get('average_ms') or 0)} ms average, {int(h.get('max_ms') or 0)} ms slowest, last {int(h.get('last_ms') or 0)} ms"),
             _kv("Last look finished", f"{int(h['age'])} s ago" if h.get("age") is not None else "never"),
             _kv("Last error", h.get("last_error") or "none"), ""]
+    out += ["== Potions =="] + potion_lines(f.get("potions")) + [""]
     out += ["== Reader v2 (test) =="] + shadow_lines(f.get("shadow") or {}) + [""]
     for part, title in (("mesos", "Mesos"), ("party", "Party size")):
         facts = (f.get("shadow_parts") or {}).get(part)

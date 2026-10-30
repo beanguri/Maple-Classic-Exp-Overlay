@@ -254,6 +254,10 @@ try:
         sent.clear()
         m.urllib.request.urlopen = answering(data, code)
         check(f"Send report: answer {code} {data} is '{wanted}'", m.post_report(report_body) == wanted)
+    for data, want in (({"ok": True, "n": 17}, 17), ({"ok": True}, None), ({"ok": True, "n": "x"}, None), ({"ok": True, "n": 0}, None)):
+        m.urllib.request.urlopen = answering(data, 200)
+        got = m.post_report(report_body)
+        check(f"Send report: answer {data} gives report number {want}", got == "ok" and getattr(got, "n", "missing") == want)
     check("Send report posts to /api/report with exactly the four fields",
           sent[0][0].endswith("/api/report") and set(json.loads(sent[0][1])) == {"id", "version", "message", "details"})
 
