@@ -91,7 +91,7 @@ check("Ideal at 1080p puts the potion bar where it was found on the Ideal frames
 # ---- the potion bar's types (other tickets build against these exact fields)
 check("SlotSpot fields", potion_bar.SlotSpot._fields == ("index", "rect", "style"))
 check("BarLook fields", potion_bar.BarLook._fields == ("layout", "mode", "scale", "origin", "slots"))
-check("SlotRead fields", potion_bar.SlotRead._fields == ("index", "rect", "style", "item", "kind", "count", "run"))
+check("SlotRead fields", potion_bar.SlotRead._fields == ("index", "rect", "style", "item", "kind", "count", "run", "dist", "dropped"))
 check("PotionLook fields", potion_bar.PotionLook._fields == ("seen", "layout", "mode", "scale", "slots"))
 check("Hint fields", potion_bar.Hint._fields == ("last", "mode_scale", "runs"))
 check("layouts: keyboard and the two controller D-pad modes",
