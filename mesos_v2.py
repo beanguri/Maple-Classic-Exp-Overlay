@@ -124,6 +124,7 @@ E_COMMA = 0.65                      # a comma is small: it counts as there at th
 INK_MIN = 8                         # (a character's ink mass must be this big for that share to mean anything)
 SOLID = 0.6                         # ink this strong anywhere (even one pixel) means the part is not empty
 EMPTY = 0.06                        # the rest of the box is empty when its mean ink is below this
+E_BLANK = 0.8                       # an empty cell fits no character better than this (about 1.0): a cell that fits one this well still holds a faded digit
 NEAR_STEPS = (0.25, 0.125)           # ...a cell on the grid needs less
 STEPS = (0.5, 0.25, 0.125)          # sub-pixel refinement: game pixels moved at a time
 
@@ -233,6 +234,12 @@ def _refine(font, ch, ink, cx, cy, scale, kernel, steps=STEPS):
     return err, cx, cy
 
 
+def _fades(font, ink, cx, cy, scale, kernel):
+    """Does this digit cell still fit some digit (even faintly)? A real end of the number leaves it blank."""
+    got = _best(font, "0123456789", ink, cx, cy, scale, kernel, near=True)
+    return bool(got) and got[0][0] < E_BLANK
+
+
 def _decode(font, ink, scale, kernel, ox, oy, left):
     """The number whose last digit's cell has its corner at (ox, oy): one cell at a time to the left, each the
     single clear best fit, until the number ends (nothing where a digit or comma would be) and the rest of the
@@ -247,13 +254,15 @@ def _decode(font, ink, scale, kernel, ox, oy, left):
             if got and got[0][0] <= E_COMMA and not _empty(ink, *_comma_part(comma_x, cy, scale)):
                 chars.append(",")
             elif _empty(ink, left, comma_x + 6 * scale, *band):
+                if _fades(font, ink, cx, cy, scale, kernel):
+                    return None, "unsure"                # (a digit gone faint, not an end: never a shorter number)
                 break                                    # no comma: the number ended with k digits
             else:
                 return None, "unsure"
         got = _best(font, "0123456789", ink, cx, cy, scale, kernel, near=True)
         ch = _sure(got)
         if ch is None:
-            if k and k % 3 and _empty(ink, left, cx + 6 * scale, *band):
+            if k and k % 3 and _empty(ink, left, cx + 6 * scale, *band) and not (got and got[0][0] < E_BLANK):
                 break                                    # nothing left: the number ended
             return None, "unsure" if chars or (got and got[0][0] < 0.8) else "none"
         chars.append(ch)
