@@ -64,7 +64,7 @@ def new_log():
 
 
 def a_day(log, looks):
-    log.snapshot(rnd.choice(["0.9.14-beta", "0.9.14", "10.20.30-beta.2"]),
+    log.snapshot(rnd.choice(["0.9.14-beta", "0.9.13-beta", m.VERSION]),     # (the site takes released versions only)
                  rnd.choice(["Windows 10.0.26200", "Windows éè 10", "", "x" * 200, "macOS 15.1"]),
                  [(rnd.choice([1920, 2560, 3840, 5120]), rnd.choice([1080, 1440, 2880]), rnd.choice([None, 100, 150, 500]))
                   for _ in range(rnd.choice([0, 1, 4, 7]))], rnd.choice(["screen", "window", "region"]),
@@ -106,7 +106,7 @@ check("60 made-up days: the server takes every body the overlay makes", taken ==
 (folder / "health.json").unlink(missing_ok=True)
 clock[0] = now - 86400
 log = new_log()
-log.snapshot("10.20.30-beta.2", "Windows é" * 20, [(20000, 20000, 500)] * 6, "region", "no_eng")
+log.snapshot(m.VERSION, "Windows é" * 20, [(20000, 20000, 500)] * 6, "region", "no_eng")   # (released: the site takes no other)
 rec = log.today()
 for k in healthlog.EXP_KINDS:
     rec["exp"][k] = 30000
@@ -180,6 +180,24 @@ check("a day where every look broke (0 looks, only exception names) is built and
 # ---- 4. what the server says about bad requests, as the overlay reads it
 m.STATS_SITE = BASE
 check("a body the server refuses comes back as 'bad' with the field named", m.post_health({**body, "looks": -1}) == ("bad", "looks"))
+
+# ---- 4b. only released versions (server/src/released.js): a changed copy is refused for good, a newer one waits
+check("a changed copy's version (0.9.14-myfork) is 'bad' with the field named: the day is dropped, never retried",
+      m.post_health({**body, "version": "0.9.14-myfork"}) == ("bad", "version"))
+check("...as is an old one that was never released (0.9.14 without -beta)", m.post_health({**body, "version": "0.9.14"}) == ("bad", "version"))
+check("a version newer than any released one is 'later' (the site may not be deployed yet): the day waits",
+      m.post_health({**body, "version": "0.9.99-beta"}) == ("later", ""))
+report_body = {"id": "0123456789abcdef", "version": m.VERSION, "message": "hello", "details": "x"}
+check("Send report from a changed copy: 'bad' (the window points to GitHub)", m.post_report({**report_body, "version": "0.9.16-beta"}) == "bad")
+c = http.client.HTTPConnection(HOST.hostname, HOST.port, timeout=20)
+c.request("POST", "/api/report", body=json.dumps(report_body).encode(), headers={"Content-Type": "application/json",
+                                                                              "CF-Connecting-IP": "10.6.0.1"})
+r = c.getresponse()
+answer = json.loads(r.read() or b"{}")
+c.close()
+check(f"a stored Send report answers its number ({answer})", r.status == 200 and answer.get("ok") is True and isinstance(answer.get("n"), int))
+check("...and post_report still takes that answer as 'ok'", m.post_report(report_body) == "ok")
+
 
 
 # ---- 5. 0.9.14's new keys, end to end (UI size, layout, shadow parts, EXP's reasons)

@@ -1,7 +1,9 @@
 // Checks the formatting part of tools/health_summary.mjs with canned query results (no database needed).
 //   node server/test_health_summary.mjs
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { summarize, summarizeReports, formatOne, oneReportQuery, queries, partyReader } from "./tools/health_summary.mjs";
+import { RELEASED, versionStatus } from "./src/released.js";
 
 const base = { looks: 0, secs: 0, gh: null, e_read: 0, e_tess: 0, e_unclear: 0, e_nf: 0, e_cov: 0, e_nowin: 0, e_pct: 0,
   map_r: 0, map_u: 0, cls_r: 0, cls_u: 0, mes_r: 0, mes_u: 0, pot_r: 0, pot_u: 0, sh_agree: 0, sh_dis: 0, sh_v2only: 0,
@@ -111,6 +113,27 @@ if (sqlite) {
   assert.ok(shown.includes("hi ") && shown.includes("second line") && shown.includes("ok"), "the readable text stays");
   assert.ok(shown.includes("\nsecond line"), "line breaks in the long text stay");
   assert.ok(/data/i.test(formatOne({ n: 1, id: "x", received: "t", version: "v", message: "m", details: "d" }).join("\n")), "says it is the player's text, to be read as data");
+}
+
+
+// Only released versions are counted (src/released.js); other versions get one line of their own.
+const q = queries("2026-10-01T00:00:00.000Z");
+for (const k of ["groups", "days", "errors", "disagree", "worst"]) {
+  assert.ok(q[k].includes("IN ('0.9.0-beta'") && q[k].includes("'0.9.14-beta')"), `${k} counts released versions only`);
+}
+assert.ok(/NOT \(json_extract\(body,'\$\.version'\) IN \(/.test(q.unknown), "the unknown query takes the others");
+const forks = summarize({ ...data, unknown: [{ v: "0.9.16-beta", installs: 1 }, { v: "1.0.0\x1b[2J", installs: 3 }] }, 7).join("\n");
+assert.ok(forks.includes("not counted (not a released version: a changed copy of the overlay):  0.9.16-beta 1 install, 1.0.0"), forks);
+assert.ok(forks.includes("3 installs") && !forks.includes("\x1b"), "a fork's version is printed as plain data");
+assert.ok(!summarize(data, 7).join("\n").includes("not counted"), "no line when every version is released");
+
+// The release step can't be forgotten: the overlay's VERSION must be in released.js (build.yml checks it too).
+const VERSION = fs.readFileSync(new URL("../maple_exp.py", import.meta.url), "utf8").match(/^VERSION = "([^"]+)"/m)[1];
+assert.ok(RELEASED.includes(VERSION), `maple_exp.py VERSION ${VERSION} is missing from server/src/released.js (release step)`);
+assert.equal(versionStatus(VERSION), "ok");
+for (const [v, want] of [["0.9.14-beta", "ok"], ["0.9.0-beta", "ok"], ["0.9.14", "refused"], ["0.9.14-myfork", "refused"],
+  ["0.8.9-beta", "refused"], ["", "refused"], [null, "refused"], ["0.9.15-beta", "later"], ["0.10.0", "later"], ["1.0.0", "later"]]) {
+  assert.equal(versionStatus(v), want, `versionStatus(${JSON.stringify(v)})`);
 }
 
 console.log("health_summary: all checks passed");

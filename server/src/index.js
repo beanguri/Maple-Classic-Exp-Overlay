@@ -16,6 +16,7 @@
 
 import { canonicalMap, isListed } from "./mapnames.js";
 import { handleReports } from "./reports.js";
+import { olderThan, versionKey, versionStatus } from "./released.js";
 
 const MIN_PLAYERS = 3;              // different players needed before a map is ranked
 const MAX_MAPS = 40;                // ranked maps in one answer
@@ -224,6 +225,11 @@ export function checkRun(r, now = Date.now()) {
   const trusted = mesos >= 0 && mesosSeconds <= seconds && !oldMesos(r.version, now);
   const mesosHr = trusted && mesosSeconds >= 600 ? mesos / mesosSeconds * 3600 : null;
   if (mesosHr !== null && mesosHr > MAX_MESOS_HR) return { why: "impossible mesos/hr" };
+  // Only released overlays (released.js). Runs from 0.9.0-0.9.2 carry no version and are taken as before. A version
+  // newer than any released one waits ("retry": the site may not be deployed yet); any other is refused for good.
+  const status = r.version == null ? "ok" : versionStatus(r.version);
+  if (status === "later") return { why: "version not known yet", retry: true };
+  if (status === "refused") return { why: "not an official version of the overlay" };
   return {
     run: {
       map: named.name, unlisted: !named.listed, job, started, level_start: levelStart, level_end: levelEnd, party, exp, seconds,
@@ -302,7 +308,8 @@ async function postRuns(request, env, now, url) {
     const started = typeof raw?.started === "string" ? raw.started.slice(0, 16) : null;
     return { started, ...checkRun(raw, now) };
   });
-  const results = checked.map((c) => (c.run ? null : { started: c.started, ok: false, why: c.why }));
+  const results = checked.map((c) => (c.run ? null
+    : { started: c.started, ok: false, why: c.why, ...(c.retry ? { retry: true } : {}) }));
   if (!checked.some((c) => c.run)) return json({ received: 0, results }, 200, false);
 
   const day = new Date(now).toISOString().slice(0, 10);
@@ -574,16 +581,6 @@ export function pctPerHour(r) {
 }
 
 const soloOf = (r) => r.party === 1;
-
-/** [0, 9, 11] for "0.9.11-beta"; [] when it isn't a version. */
-const versionKey = (v) => (typeof v === "string" && v.match(/^\d+(\.\d+)*/)?.[0].split(".").map(Number)) || [];
-
-function olderThan(a, b) {
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
-  }
-  return false;
-}
 
 /** A run from an overlay that counted shop and trade mesos, received once that rule is on. */
 const oldMesos = (version, now) => MESOS_RULE_FROM !== "" && now >= Date.parse(MESOS_RULE_FROM)

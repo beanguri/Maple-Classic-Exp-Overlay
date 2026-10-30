@@ -7,12 +7,14 @@
 //   node tools/health_summary.mjs --report 12    one Send report in full (its number, or a health ID)
 //   node tools/health_summary.mjs --local        use the local test database (.wrangler/test-state-t14) instead of live
 //
-// It runs 5 aggregate queries (about one pass over the reports in the days chosen each) and prints how many rows
-// they read. At 3,000 players a day, 7 days is about 21,000 rows a query. Connection codes are never printed.
+// It runs 6 aggregate queries (about one pass over the reports in the days chosen each) and prints how many rows
+// they read. Only released versions (src/released.js) are counted; other versions (changed copies of the overlay)
+// get one line of their own. At 3,000 players a day, 7 days is about 21,000 rows a query. Connection codes are never printed.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { RELEASED } from "../src/released.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_STATE = ".wrangler/test-state-t14";
@@ -26,8 +28,10 @@ const S = (p) => `COALESCE(SUM(${J(p)}),0)`;
 const SHADOW_FIELDS = [["agree", "agree"], ["disagree", "dis"], ["v2_only", "v2only"], ["old_only", "oldonly"],
   ["neither", "neither"], ["skipped", "skipped"], ["errors", "err"]];
 const SHADOW_PARTS = [["shadow_mesos", "shm"], ["shadow_party", "shp"]];   // mesos and party boxes (0.9.14)
+const LISTED = `${J("version")} IN (${RELEASED.map((v) => `'${v}'`).join(", ")})`;   // (the list is ours, not typed)
 export function queries(since) {
-  const w = `received >= '${since}' AND json_valid(body)`;
+  const all = `received >= '${since}' AND json_valid(body)`;
+  const w = `${all} AND ${LISTED}`;
   return {
     groups: `SELECT ${J("version")} AS v, ${J("game.w")} AS w, ${J("game.h")} AS h, ${J("game.fullscreen")} AS fs,
       ${J("tesseract")} AS tess, ${J("capture")} AS cap, COUNT(DISTINCT id) AS players,
@@ -59,6 +63,8 @@ export function queries(since) {
       MAX(${J("game.fullscreen")}) AS fs, SUM(${J("looks")}) AS looks,
       SUM(${J("exp.not_found")} + ${J("exp.unclear")}) AS bad
       FROM health_reports WHERE ${w} GROUP BY id HAVING looks >= 100 ORDER BY bad * 1.0 / looks DESC LIMIT 10`,
+    unknown: `SELECT ${J("version")} AS v, COUNT(DISTINCT id) AS installs FROM health_reports WHERE ${all} AND NOT (${LISTED})
+      GROUP BY v ORDER BY installs DESC LIMIT 10`,
   };
 }
 
@@ -101,7 +107,7 @@ function rollup(rows, keyOf) {
   return [...out.values()];
 }
 
-/** `data` = { groups, days, errors, disagree, worst } row arrays; returns the summary as lines. */
+/** `data` = { groups, days, errors, disagree, worst, unknown } row arrays; returns the summary as lines. */
 export function summarize(data, dayCount) {
   const out = [];
   const g = data.groups || [];
@@ -117,6 +123,11 @@ export function summarize(data, dayCount) {
   for (const d of [...perDay.keys()].sort()) out.push(`   ${d}  ${num(perDay.get(d))}`);
   out.push("   by version:  " + rollup(g, (r) => r.v).sort((a, b) => b.players - a.players)
     .map((t) => `${t.key} ${num(t.players)}`).join(", "));
+  const unknown = data.unknown || [];
+  if (unknown.length) {
+    out.push("   not counted (not a released version: a changed copy of the overlay):  " +
+      unknown.map((r) => `${plain(r.v)} ${num(r.installs)} install${r.installs === 1 ? "" : "s"}`).join(", "));
+  }
 
   // 2 + 3. Game sizes, and how the EXP bar read on each size and version.
   out.push("", "2-3. Game size and version: players, digit height (gh), EXP bar read / unclear / not found / Tesseract, % bar only");

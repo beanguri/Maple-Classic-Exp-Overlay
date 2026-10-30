@@ -561,12 +561,33 @@ if RULE_FROM:
     check(f"from then on, an overlay older than {MESOS_VERSION} gives no mesos/hr ({after}), its EXP still counts",
           after is None and exp_hr > 0)
     current, _ = stored(to_rule + 24, 15, old, version=f"{MESOS_VERSION}-beta")
-    newer, _ = stored(to_rule + 24, 30, old, version="1.0.0")
-    unknown, _ = stored(to_rule + 24, 45, old, version="?")
-    check(f"...{MESOS_VERSION} and newer keep theirs ({current}, {newer}), an unknown version doesn't ({unknown})",
+    newer, _ = stored(to_rule + 24, 30, old, version="0.9.14-beta")
+    unknown, _ = stored(to_rule + 24, 45, old, version=None)      # (0.9.0-0.9.2 send no version)
+    check(f"...{MESOS_VERSION} and newer keep theirs ({current}, {newer}), a run with no version doesn't ({unknown})",
           current is not None and newer is not None and unknown is None)
 else:
     print("(skipped: MESOS_RULE_FROM isn't set)")
+
+# ---- only released versions (src/released.js): a changed copy's runs are refused for good, a newer version's wait
+who = install()
+got, r = stored(50, 0, who, version="0.9.14-myfork")
+res = (r.get("results") or [{}])[0] if got == "not stored" else {}
+check(f"a changed copy's run (0.9.14-myfork) is refused for good, not stored ({res})",
+      got == "not stored" and res.get("ok") is False and "retry" not in res)
+got, r = stored(50, 15, who, version="0.9.16-beta")
+res = (r.get("results") or [{}])[0] if got == "not stored" else {}
+check(f"a run from a version newer than any released one waits (retry), not stored ({res})",
+      got == "not stored" and res.get("ok") is False and res.get("retry") is True)
+got, _ = stored(50, 30, who, version=None)
+rows = sql(f"SELECT version FROM runs WHERE install = '{who}'")
+check(f"a run with no version (0.9.0-0.9.2) is taken as before, stored as '?' ({got}, {rows})",
+      got != "not stored" and [x["version"] for x in rows] == ["?"])
+got, _ = stored(50, 45, who, version="0.9.3-beta")
+check(f"a run from an old released version is taken ({got})", got != "not stored")
+mixed = call("/api/runs", {"install": who, "runs": [dict(run(when(51, 0), 50000), version="0.9.14-beta"),
+                                                    dict(run(when(51, 15), 50000), version="0.9.13-beta; DROP")]}, later=52)
+check(f"in one batch the released run is taken and the changed copy's refused ({mixed})",
+      mixed.get("received") == 1 and [x.get("ok") for x in mixed.get("results", [])] == [True, False])
 
 
 def players_at(map_name, level, hours_ahead, job="Fighter", n=3, **kw):

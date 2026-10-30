@@ -8,6 +8,8 @@
 // bump after it is skipped too, and a refused request writes nothing. The answer comes from the INSERT's
 // meta.changes: 1 = stored, 0 = over a limit (429).
 
+import { versionStatus } from "./released.js";
+
 const DAY = 86400000;
 const KEEP_REPORTS_DAYS = 90;
 const KEEP_LIMITS_DAYS = 3;
@@ -171,6 +173,12 @@ export async function handleReports(request, env, now, url, tools) {
   const today = new Date(now).toISOString().slice(0, 10);
   const bad = isHealth ? badHealthField(body, today) : badReportField(body);
   if (bad) return reply({ error: bad }, 400);
+  // Only released overlays (released.js). A health report from a version newer than any released one waits (the site
+  // may not be deployed yet: the overlay keeps the day and tries tomorrow); any other unknown version is refused for
+  // good (the overlay drops that day). A Send report is refused either way (the window points to GitHub).
+  const status = versionStatus(body.version);
+  if (status === "later" && isHealth) return reply({ retry: true, why: "version" }, 429);
+  if (status !== "ok") return reply({ error: "version" }, 400);
 
   const limit = caps(env, url);
   const conn = await tools.connectionCode("reports " + tools.connectionPart(request.headers.get("CF-Connecting-IP") || "?"),
@@ -230,9 +238,13 @@ async function storeReport(env, b, today, conn, stamp, limit) {
      SELECT ?1, ?2, ?3, ?4, ?5, ?6
      WHERE COALESCE((SELECT n FROM limits WHERE day = ?7 AND key = ?8), 0) < ?9
        AND COALESCE((SELECT n FROM limits WHERE day = ?7 AND key = ?10), 0) < ?11
-       AND COALESCE((SELECT n FROM limits WHERE day = ?7 AND key = 'r:site'), 0) < ?12`
+       AND COALESCE((SELECT n FROM limits WHERE day = ?7 AND key = 'r:site'), 0) < ?12
+     RETURNING n`
   ).bind(b.id, stamp, conn, b.version, b.message.trim(), b.details, today, idKey, limit.reportId, connKey,
     limit.reportConn, limit.reportSite);
   const results = await env.DB.batch([insert, bump(env, today, idKey), bump(env, today, connKey), bump(env, today, "r:site")]);
-  return results[0].meta.changes === 1 ? reply({ ok: true }) : reply({ retry: true }, 429);
+  // The report's number goes back to the player ("report #n"), so they can name it on GitHub or Reddit without
+  // showing the health ID (that would tie their name to 90 days of health reports).
+  const n = results[0].results?.[0]?.n;
+  return results[0].meta.changes === 1 ? reply(Number.isInteger(n) ? { ok: true, n } : { ok: true }) : reply({ retry: true }, 429);
 }

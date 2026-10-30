@@ -130,6 +130,9 @@ check("deploy check: new server names the bad id, not ui", status == 400 and a.g
 check("...and stores nothing", everything() == before)
 check("the stored body is the one sent", json.loads(sql(
     "SELECT body FROM health_reports WHERE id = '0123456789abcdef'")[0]["body"]) == health_full)
+for hid, v in (("f222222222222213", "0.9.13-beta"), ("f222222222222200", "0.9.0-beta")):
+    status, a = post("/api/health", dict(health_full, id=hid, version=v), ip=fresh())
+    check(f"health from a released {v}: taken", status == 200 and a == {"ok": True})
 
 # ---- a repeat of the same id and day: dup answer, nothing written
 before = everything()
@@ -178,12 +181,31 @@ check("GET /api/report: 405", post("/api/report", None, method="GET")[0] == 405)
 check("wrong content type: 415", post("/api/health", health_full, ip=fresh(), content_type="text/plain")[0] == 415)
 check("not JSON: 400", post("/api/health", None, raw=b"{nope", ip=fresh())[0] == 400)
 
+# ---- only released versions (src/released.js): a changed copy is refused for good, a newer health report waits
+for v in ("0.9.14-myfork", "0.9.14", "0.8.0-beta", "0.9.13-beta.1"):
+    before = everything()
+    status, a = post("/api/health", dict(health_full, id="f" + "0" * 15, version=v), ip=fresh())
+    check(f"health from {v}: 400 version", status == 400 and a == {"error": "version"})
+    status, a = post("/api/report", dict(report_ok, version=v), ip=fresh())
+    check(f"Send report from {v}: 400 version", status == 400 and a == {"error": "version"})
+    check("...and neither wrote anything", everything() == before)
+for v in ("0.9.15-beta", "0.9.16-beta", "1.0.0"):
+    before = everything()
+    status, a = post("/api/health", dict(health_full, id="f" + "1" * 15, version=v), ip=fresh())
+    check(f"health from a newer {v}: try later (429 retry), not dropped", status == 429 and a == {"retry": True, "why": "version"})
+    status, a = post("/api/report", dict(report_ok, version=v), ip=fresh())
+    check(f"Send report from a newer {v}: 400 version", status == 400 and a == {"error": "version"})
+    check("...and neither wrote anything, not even a counter", everything() == before)
+
 # ---- player reports
 for case in CONTRACT["report_invalid"]:
     status, a = post("/api/report", with_change(report_ok, case["change"]), ip=fresh())
     check(f"report invalid {case['field']}: {list(case['change'])[0]}", status == 400 and a.get("error") == case["field"])
-check("report valid: normal", post("/api/report", report_ok, ip=fresh()) == (200, {"ok": True}))
-check("report valid: no details", post("/api/report", CONTRACT["report_valid"][1]["body"], ip=fresh()) == (200, {"ok": True}))
+status, a = post("/api/report", report_ok, ip=fresh())
+first_n = sql("SELECT MAX(n) AS n FROM user_reports")[0]["n"]
+check(f"report valid: normal, answered with its number ({a})", status == 200 and a == {"ok": True, "n": first_n})
+status, a = post("/api/report", CONTRACT["report_valid"][1]["body"], ip=fresh())
+check("report valid: no details (the next number)", status == 200 and a == {"ok": True, "n": first_n + 1})
 check("report: the same id's 3rd today is taken", post("/api/report", report_ok, ip=fresh())[0] == 200)
 before = everything()
 check("report: the 4th from that id is refused", post("/api/report", report_ok, ip=fresh())[0] == 429)
