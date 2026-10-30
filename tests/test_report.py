@@ -49,8 +49,14 @@ check("no Tesseract is pointed out", says("Tesseract wasn't found", tesseract={"
 check("no game window is pointed out", says("window wasn't found", game={"found": False, "rect": None}))
 check("a minimized game is pointed out", says("minimized", game={"minimized": True}))
 check("a game bigger than the screen (scaling) is pointed out",
-      says("bigger than the biggest screen", game={"rect": (0, 0, 3840, 2160)}, monitors=[(2560, 1440)]))
+      says("bigger than every screen", game={"rect": (0, 0, 3840, 2160)}, monitors=[(2560, 1440)]))
 check("a 4K game on a 4K screen is fine", not says("bigger than", game={"rect": (0, 0, 3840, 2160)}, monitors=[(3840, 2160)]))
+check("a 2560x1440 game on a portrait 2160x3840 screen beside a 2560x1440 one is fine (it fits the second)",
+      not says("bigger than", game={"rect": (0, 0, 2560, 1440)}, monitors=[(2160, 3840), (2560, 1440)]))
+check("a game that fits only the portrait screen is fine too",
+      not says("bigger than", game={"rect": (0, 0, 1080, 1920)}, monitors=[(2160, 3840), (2560, 1440)]))
+check("a game wide for one screen and tall for the other fits neither: pointed out",
+      says("bigger than every screen", game={"rect": (0, 0, 2560, 2000)}, monitors=[(2160, 3840), (2560, 1440)]))
 check("a process unaware of scaling is pointed out", says("aware of Windows scaling", dpi_awareness="not aware"))
 check("150% scaling is mentioned", says("scaling on the game's screen is 150%", dpi=144))
 check("the overlay covering the EXP bar is pointed out", says("covering the EXP bar", overlay={"covering": ["EXP bar"]}))
@@ -102,6 +108,32 @@ check("the details have every part", all(x in full for x in ("== Computer ==", "
                                                               "== Reading thread ==", "== Settings ==", "== errors.log")))
 check("the details include the errors and the history", "ValueError: x" in full and "+0:01  Tracking" in full)
 check("empty facts don't crash it", bool(report.summary({})) and bool(report.details({})) and report.looks_wrong({}) != [None])
+
+# the potion section
+POT = {"on": True, "seen": True, "unseen_for": None, "layout": "keyboard", "mode": "ideal", "scale": 1.5,
+       "cost_text": "1,200", "own_prices": ["Lemon"],
+       "slots": [{"index": 4, "item": "Lemon", "kind": "consumable", "count": 236, "dist": 0.12, "dropped": False},
+                 {"index": 5, "item": "Blue Potion", "kind": "consumable", "count": None, "dist": 0.47, "dropped": True},
+                 {"index": 6, "item": None, "kind": "consumable", "count": None, "dist": 0.2, "dropped": False},
+                 {"index": 7, "item": None, "kind": "skill", "count": None, "dist": 0.1, "dropped": False},
+                 {"index": 8, "item": None, "kind": "empty", "count": None, "dist": 1.0, "dropped": False}]}
+pot = report.details(facts(potions=POT))
+check("the details have a Potions part", "== Potions ==" in pot and "Bar seen: yes" in pot and "keyboard, UI size ideal" in pot)
+check("...with the cost row as shown and each consumable slot's count and icon distance",
+      "Cost row shows: 1,200" in pot and "Slot 4: Lemon, count 236, icon distance 0.12" in pot)
+check("...and why a count was dropped, or just not read",
+      "Slot 5: Blue Potion, count dropped (icon too far from the item), icon distance 0.47" in pot
+      and "Slot 6: unknown item, count not read" in pot)
+check("...and the other slots and the shipped items with an own price",
+      "empty 1, skill 1" in pot and "Shipped items with your own price: Lemon" in pot)
+check("the potion part comes before the timeline and the errors",
+      pot.index("== Potions ==") < pot.index("== What happened") < pot.index("== errors.log"))
+unseen = report.details(facts(potions={**POT, "seen": False, "unseen_for": 125}))
+check("a bar not seen says since when", "Bar seen: no, not seen for 2:05" in unseen)
+check("potions off in Settings is said", "Potions: off in Settings" in report.details(facts(potions={"on": False})))
+check("the short summary gets one potion line",
+      "- Potions: bar seen, keyboard, 1 of 3 counts read" in report.summary(facts(potions=POT))
+      and report.summary(facts(potions=POT)).count("Potions") == 1)
 
 # ---- Send report: the scrubber, the typed message, the body
 import json  # noqa: E402

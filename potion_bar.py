@@ -28,7 +28,9 @@ BarLook = namedtuple("BarLook", "layout mode scale origin slots")
 
 # One slot read: item is the item's name or None when it can't be told; kind one of KINDS or None;
 # count the number shown or None when it isn't certain (0 is a real count).
-SlotRead = namedtuple("SlotRead", "index rect style item kind count run", defaults=(None,))   # run: the count reader's Run, kept to pass back
+SlotRead = namedtuple("SlotRead", "index rect style item kind count run dist dropped", defaults=(None, None, False))
+# (run: the count reader's Run, kept to pass back; dist: how far the slot's icon is from its item, 0 = identical;
+# dropped: a count was read but thrown away because dist was over COUNT_ICON_MAX. Both are for bug reports only.)
 
 # What a look at the potion bar saw. seen False: no bar to read (covered, hidden, off-screen, no window);
 # seen True with no consumable slots: the bar is there and holds no potions.
@@ -279,12 +281,12 @@ def read_potions(img, window_w, window_h, at=(0, 0), hint=None, assets=None):
         if crop.shape[0] != h or crop.shape[1] != w:
             continue
         item, kind, dist = _slot_item(table, crop, spot.style)
-        count, run = None, None
+        count, run, dropped = None, None, False
         if kind == "consumable":
             count, run = glyphs.read_count(img, (cx, cy, w, h), bar.scale, spot.style, runs.get(spot.index))
             if count is not None and count < 1000 and dist > COUNT_ICON_MAX:
-                count, run = None, None      # (a 4-digit count can't be a cut-off longer one, and its digits spill into the icon)
-        reads.append(SlotRead(spot.index, spot.rect, spot.style, item, kind, count, run))
+                count, run, dropped = None, None, True      # (a 4-digit count can't be a cut-off longer one, and its digits spill into the icon)
+        reads.append(SlotRead(spot.index, spot.rect, spot.style, item, kind, count, run, dist, dropped))
     return PotionLook(True, bar.layout, bar.mode, bar.scale, tuple(reads))
 
 
