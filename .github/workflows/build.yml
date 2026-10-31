@@ -173,15 +173,18 @@ jobs:
           (cd check && sha256sum --check ../release/SHA256SUMS.txt)
 
   macos:
-    # The Mac download: a .app (Apple Silicon) with Tesseract inside, signed ad hoc (no Apple
-    # Developer account), so macOS asks the first time it's opened. Made by build_macos.py.
-    # Runs alongside the Windows build; on a version tag it waits for that job's draft release.
-    runs-on: macos-latest
+    # The Mac downloads: a .dmg for Apple Silicon and one for Intel, made by build_macos.py with its own Tesseract
+    # (built here from pinned sources for macOS 14 and up: Homebrew's needs the runner's own, much newer macOS),
+    # then checked by check_macos.py with Homebrew moved aside. Read-only on purpose: this job installs and builds
+    # things, so it can't write a release or sign an attestation (the release job does that, from these files).
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]     # Apple Silicon, Intel (pinned: macos-latest moves)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     permissions:
-      contents: write             # adding the zip to the draft release (version tags only)
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -189,55 +192,57 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
-      - name: Install Tesseract and the packages
-        run: |
-          brew install tesseract
-          python -m pip install -r requirements.txt pyinstaller==6.17.0
+      - name: Install the packages (exact files, each checked by its SHA-256)
+        run: python -m pip install --require-hashes -r requirements-build-mac.txt
+      - name: Build Tesseract from pinned sources (for macOS 14 and up, nothing from Homebrew)
+        run: python build_macos.py tesseract "$RUNNER_TEMP/tess"
       - name: Tests
         run: |
+          export PATH="$RUNNER_TEMP/tess/bin:$PATH"
           python tests/test_logic.py
           python tests/test_ocr.py
           python tests/test_v2.py
       - name: Build
+        env:
+          TESSERACT_PREFIX: ${{ runner.temp }}/tess
         run: python build_macos.py
+      - name: Move Homebrew aside (nothing may come from it now)
+        run: |
+          cellar="$(brew --cellar)"
+          sudo mv "$cellar" "$cellar.hidden"
+          echo "CELLAR=$cellar" >> "$GITHUB_ENV"
+      - name: Check the build the way a player gets it
+        run: python check_macos.py "build/macos/dist/Maple Classic Exp Overlay.app" release/*.dmg
+      - name: Put Homebrew back
+        if: always()
+        run: if [ -n "$CELLAR" ] && [ -d "$CELLAR.hidden" ]; then sudo mv "$CELLAR.hidden" "$CELLAR"; fi
       - name: SHA-256 of the download
         id: sum
         shell: bash
         run: |
           cd release
-          shasum -a 256 *.zip | tee SHA256SUMS-macOS.txt
-          echo "zip=release/$(ls *.zip)" >> "$GITHUB_OUTPUT"
-          { echo "### The Mac download"; echo; echo '```'; cat SHA256SUMS-macOS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Record where the download came from (attestation)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
-        with:
-          subject-path: ${{ steps.sum.outputs.zip }}
-      - name: Keep the download on this run's page (the zip itself, not wrapped in another zip)
+          kind=$([ "$(uname -m)" = arm64 ] && echo AppleSilicon || echo Intel)
+          shasum -a 256 *.dmg | tee "SHA256SUMS-macOS-$kind.txt"
+          echo "dmg=release/$(ls *.dmg)" >> "$GITHUB_OUTPUT"
+          echo "sums=release/SHA256SUMS-macOS-$kind.txt" >> "$GITHUB_OUTPUT"
+          { echo "### The Mac download ($kind)"; echo; echo '```'; cat "SHA256SUMS-macOS-$kind.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the download on this run's page (the .dmg itself, not wrapped in a zip)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          path: ${{ steps.sum.outputs.zip }}
+          path: ${{ steps.sum.outputs.dmg }}
           archive: false
-      - name: Keep the checksum on this run's page
+      - name: Keep its checksum on this run's page
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          path: release/SHA256SUMS-macOS.txt
+          path: ${{ steps.sum.outputs.sums }}
           archive: false
-      - name: Add it to the draft release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-          ZIP: ${{ steps.sum.outputs.zip }}
-        run: |
-          # The Windows job makes the draft: wait for it (up to 20 minutes).
-          for try in $(seq 40); do
-            state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
-            [ "$state" != "none" ] && break
-            sleep 30
-          done
-          if [ "$state" = "true" ]; then
-            gh release upload "$TAG" "$ZIP" release/SHA256SUMS-macOS.txt --clobber
-          else
-            echo "::warning::$TAG isn't a draft release ($state), so the Mac zip is only on this run's page."
-          fi
+      - name: Keep the check report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: mac-check-${{ matrix.runner }}
+          path: |
+            build/macos/check-*.md
+            build/macos/screen-*.png
+            build/macos/work/*/warn-*.txt
+          if-no-files-found: warn
