@@ -659,6 +659,64 @@ check("party v3 through the reader: a held count goes to the shadow as unclear (
       _rdr._party_v3(np.full((768, 1366, 3), 60, np.uint8), None, 768) == (None, "unclear")
       and _rdr._party_last.why == "held" and _rdr._party_last.count == 4)
 
+# ---- party v3 decides (0.9.15, Q10); today's reader is the fallback
+PL = party_v3.PartyLook
+for look, want, why in ((None, (3, None), "v3 didn't run: today's count"),
+                        (PL(4, "ok", 1.0, (1, 2, 3, 4), 0), (4, None), "v3 read 4: 4"),
+                        (PL(1, "ok", None, None, 0), (1, None), "v3 saw no list: solo"),
+                        (PL(None, "unclear", 1.0, None, 0), (None, None), "v3 unclear, nothing held: no party size (never a guess)"),
+                        (PL(None, "unclear", None, None, 0), (None, None), "v3 unclear with no scale: no party size"),
+                        (PL(None, "unclear", 1.17, None, 0), (3, None), "v3 unclear at a weak UI scale (1.17): today's count"),
+                        (PL(None, "unclear", 1.406, None, 0), (None, None), "v3 unclear at the game's own 1.406: no party size")):
+    check(f"party main: {why}", m.ScreenReader._party_answer(3, look) == want)
+held = m.ScreenReader._party_answer(1, PL(5, "held", 1.0, None, 2))
+check("party main: a held count decides, and the status says it is kept", held[0] == 5 and "kept at 5" in held[1])
+import shadow as _shadow  # noqa: E402
+_ps = _shadow.PartShadow("party", lambda e: None)
+_ps.main = True
+check("party main: v3 runs at every scan, also while today's reader sees no list (no 10 s wait)",
+      all(_ps.look(1, 1.0, lambda: (1, "ok"), searching=True) is not None for _ in range(5)))
+_full = cv2.imread(str(FRAMES / "exp_full-1920x1080.png"))
+
+
+def _party_scan(look, on=True):
+    """One look at a whole 1920x1080 game window (no party list on it) with v3's look replaced by `look` (or a
+    function raising), through the reader."""
+    rd = m.ScreenReader(m.DigitTemplates.load())
+    rd.hwnd, rd.mode, rd.own_rect = 1, "window", (-5000, -5000, 10, 10)
+    rd._game_rect = lambda: (0, 0, _full.shape[1], _full.shape[0])
+    rd.shadows["party"].on = on
+    real, tess = party_v3.read_party_v3, (m.TESS, m.tesseract_ok)
+    m.TESS, m.tesseract_ok = None, False
+    if look is not None:
+        party_v3.read_party_v3 = look if callable(look) else (lambda img, hint=None, last=None, hsv=None: look)
+    try:
+        return rd, rd.read(FakeScreen(_full))
+    finally:
+        party_v3.read_party_v3 = real
+        m.TESS, m.tesseract_ok = tess
+
+
+_rd, _got = _party_scan(None)
+check("party main through the reader: no list on the window is solo, read by v3", _got.party == 1 and _rd._party_look is not None)
+_, _got = _party_scan(PL(4, "ok", 1.406, (1500, 300, 267, 100), 0))
+check("party main through the reader: v3's count is the Reading's (today's reader sees no list here)", _got.party == 4)
+_, _got = _party_scan(PL(4, "held", 1.406, None, 1))
+check("party main through the reader: a held count is the Reading's, with the note", _got.party == 4 and "kept at 4" in (_got.note or ""))
+_, _got = _party_scan(PL(None, "unclear", 1.406, None, 0))
+check("party main through the reader: unclear with nothing held is no party size", _got.party is None)
+_, _got = _party_scan(PL(4, "ok", 1.406, (1500, 300, 267, 100), 0), on=False)
+check("party main through the reader: the kill switch (shadow_reader off) leaves today's reader alone", _got.party == 1)
+
+
+def _boom(*a, **k):
+    raise ValueError("boom")
+
+
+_rd, _got = _party_scan(_boom)
+check("party main through the reader: v3 raising falls back to today's count, counted as a shadow error",
+      _got.party == 1 and ("party", "errors", None) in _got.shadows and _rd.shadows["party"].idle())
+
 # ---- the class, from the status bar (the character name line is blanked in these)
 _tess = m.find_tesseract()
 m.TESS = m.ocr.Tesseract(_tess) if _tess else None
@@ -2244,6 +2302,7 @@ check("part shadow: switched off runs nothing and counts nothing", unit.look(150
 
 def quiet_party(reader):
     """These tests hand in their own party shadow: keep the reader's real one (it runs on this picture too) waiting."""
+    reader.shadows["party"].main = False            # (a plain shadow here: a main reader runs at every look)
     reader.shadows["party"].nobar_at = shadow_mod.time.monotonic() + 10 ** 6
     return reader
 

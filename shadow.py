@@ -1,6 +1,6 @@
 """Shadow mode: reader v2 (find the EXP bar by shape, read it by drawing the game's font) runs beside today's
 reader and notes whether the two agree. The shadow itself never changes a Reading, the tracker, the log or what's
-shared; a part whose shadow is `main` (EXP since 0.9.15) takes v2's answer from the Result, today's reader is its backup.
+shared; a part whose shadow is `main` (EXP and party size since 0.9.15) takes v2's answer, today's reader is its backup.
 
 The reader hands in the picture it just read, its own answer and how long it took; this keeps the counts,
 the last few disagreements (with their pictures, in memory only) and guards the CPU: if v2 costs more than
@@ -147,11 +147,11 @@ class PartShadow(_Guarded):
     def look(self, old, old_ms, run, searching=False):
         """`old`: today's confident answer or None; `old_ms`: what today's reader spent on this look; `run()` ->
         (answer, why). `searching`: today's reader found nothing to read (no box, no list): v2 then runs at most
-        every nobar_seconds, and the CPU guard leaves the look out. Returns a Result, or None when v2 did not run
+        every nobar_seconds (a main reader: every look), and the CPU guard leaves the look out. Returns a Result, or None when v2 did not run
         for a reason that isn't counted (switched off, resting after an error, waiting for the next search)."""
         if self.idle():
             return None
-        if searching:
+        if searching and not self.main:     # (a main reader runs every look: it decides)
             if time.monotonic() - self.nobar_at < self.nobar_seconds:
                 return None
             self.nobar_at = time.monotonic()
