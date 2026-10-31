@@ -3891,13 +3891,14 @@ class AutoLog:
                 self.run["exp"] += amount
 
     def tick(self, now, map_name, level, party=1, mesos=None, job=None, map_read=None, hidden=False, potions=None,
-             window_at=None, misreads=(), meso_epoch=0, estimated=False):
+             window_at=None, misreads=(), meso_epoch=0, estimated=False, party_read=True):
         """Call regularly while tracking. mesos is the MesoTracker's last look (mesos gained so
         far, when read), however old, or None: a stretch's mesos are those gained between its
         first and last look (a run's: see _site_mesos). job is the class; map_read the map name exactly as read;
         potions ({name: used so far}, their cost so far) or None when potions aren't counted.
         window_at, misreads and meso_epoch: see MesoTracker.for_log. estimated: the EXP now coming in is
-        estimated from a % alone (the line and run say so, and such a run is never shared).
+        estimated from a % alone (the line and run say so, and such a run is never shared). party_read: the party size
+        has been read (False: `party` is only the default, and a run ending so is kept on this PC, never shared).
         Returns the entry when one was logged."""
         self._note_look(mesos, meso_epoch)
         self._misreads = misreads
@@ -3923,7 +3924,7 @@ class AutoLog:
             self.meso0 = mesos                               # mesos as the stretch began
         if self.pot0 is None and potions is not None:
             self.pot0 = (dict(potions[0]), potions[1])       # potions used as the stretch began
-        self._run_tick(now, map_name, level, party, job, map_read, hidden, window_at, estimated)
+        self._run_tick(now, map_name, level, party, job, map_read, hidden, window_at, estimated, party_read)
         if hidden or now - self.start < LOG_BLOCK:       # (hidden: the map may have changed, so nothing is saved yet)
             return None
         if self.block_exp <= 0:                              # nothing gained after all
@@ -3944,7 +3945,8 @@ class AutoLog:
         self.pot0 = (dict(potions[0]), potions[1]) if potions is not None else None
         return entry
 
-    def _run_tick(self, now, map_name, level, party, job, map_read, hidden=False, window_at=None, estimated=False):
+    def _run_tick(self, now, map_name, level, party, job, map_read, hidden=False, window_at=None, estimated=False,
+                  party_read=True):
         r = self.run
         if r is None:
             return
@@ -3962,6 +3964,8 @@ class AutoLog:
             return
         r["job"] = r["job"] or job
         r["level"] = level
+        r["party_unread"] = not party_read                 # (as at its end: a size read since can only have confirmed it,
+                                                         # a different one resets the clock)
         if estimated:
             r["estimated"] = True                            # (a % alone: kept on this PC, never shared)
         if window_at is not None and window_at >= r["start"]:
@@ -3972,7 +3976,7 @@ class AutoLog:
             self._end_run(r, now)
         self.run = {"start": now, "exp": 0, "map": None}     # straight on into the next run
         self._prune()
-        self._run_tick(now, map_name, level, party, job, map_read, hidden, window_at, estimated)
+        self._run_tick(now, map_name, level, party, job, map_read, hidden, window_at, estimated, party_read)
 
     # ---- what a run takes to the website (fail closed: any doubt and it goes with EXP only)
     def _note_look(self, mesos, epoch):
@@ -3995,11 +3999,12 @@ class AutoLog:
         self.looks = before[-1:] + [k for k in self.looks if k[0] > t]
 
     def _end_run(self, r, now):
-        """Saves a finished run. One with a shop, storage or trade window seen, or an unknown
-        level, is never shared: it keeps the mesos between its first and last look. A clean one
+        """Saves a finished run. One with a shop, storage or trade window seen, an unknown level or a party
+        size never read, is never shared: it keeps the mesos between its first and last look. A clean one
         is saved with EXP only and, given a look at its start, waits for one after its end (settle)."""
         seconds = now - r["start"]
-        if r.get("window") or r.get("estimated") or r["level_start"] is None or r["level"] is None:
+        if (r.get("window") or r.get("estimated") or r.get("party_unread") or r["level_start"] is None
+                or r["level"] is None):
             inside = [k for k in self.looks if r["start"] - 2 <= k[0] <= now]
             gain = gain_s = 0
             if len(inside) >= 2:
@@ -4113,10 +4118,10 @@ class AutoLog:
 
     def unshared_runs(self):
         """Finished runs (exactly as the overlay saved them) not shared yet: only clean ones
-        (no shop, storage or trade window seen, no EXP estimated from a % alone), with a known level, not
-        waiting for a look."""
+        (no shop, storage or trade window seen, no EXP estimated from a % alone, a party size that was read), with
+        a known level, not waiting for a look."""
         return [r for r in self.runs if not r.get("shared") and not r.get("window") and not r.get("pending")
-                and not r.get("estimated") and r.get("level_start") is not None and r.get("level_end") is not None
+                and not r.get("estimated") and not r.get("party_unread") and r.get("level_start") is not None and r.get("level_end") is not None
                 and self.sealed(r, _SEALED_RUN)][:50]
 
     def mark_shared(self, started):
@@ -4180,6 +4185,10 @@ class AutoLog:
         if r.get("estimated"):
             # An older overlay doesn't know the flag and would share a sealed run: a seal that never verifies stops it.
             run["seal"], local["estimated"] = "estimated", True
+        if r.get("party_unread"):                            # (the same: the party size is only the default 1)
+            local["party_unread"] = True
+            if run["seal"] != "estimated":
+                run["seal"] = "party_unread"
         run.update(local)                                    # (kept on this PC only: not sealed, never sent)
         self._change(lambda: self.runs.append(run))
         return run
@@ -4446,6 +4455,7 @@ class App:
         self.session = Session(self.cfg["gap_seconds"])
         self.tracker, self.meso = self.session.exp, self.session.meso
         self.party = 1
+        self.party_read = False             # a party size was read twice in a row (since the start or Reset): till then 1 is a default
         self._party_seen = (None, 0)
         self.last_mesos = None
         self.rejected = 0
@@ -5907,7 +5917,7 @@ class App:
             n = n + 1 if r.party == seen else 1
             self._party_seen = (r.party, n)
             if n >= 2:
-                self.party = r.party
+                self.party, self.party_read = r.party, True
         if self.reader.job:
             self.job = self.reader.job
         if r.map:
@@ -6124,7 +6134,8 @@ class App:
             potions_now = (dict(used), self.session.potions.cost(self._prices().mapping()))
         entry = self.autolog.tick(now, self.map_name, self.level, self.party, job=self.job, map_read=self.map_read,
                                   hidden=self.map_hidden, potions=potions_now,
-                                  estimated=self.tracker.estimated and self.tracker.percent_mode, **self.meso.for_log())
+                                  estimated=self.tracker.estimated and self.tracker.percent_mode, party_read=self.party_read,
+                                  **self.meso.for_log())
         if len(self.autolog.runs) > runs:
             self.share_runs()                          # a run just finished
         if entry:
@@ -6311,7 +6322,7 @@ class App:
         self._set_start("Start")
         # Also look for the minimap, inventory and party list again (e.g. after moving them).
         self.reader.look_again()
-        self.map_name, self.party, self._party_seen = None, 1, (None, 0)
+        self.map_name, self.party, self.party_read, self._party_seen = None, 1, False, (None, 0)
         self.cfg.pop("mesos_box", None)
         save_config(self.cfg)
         self.status.set("Reset. Looking for the map name, inventory and party list again...")

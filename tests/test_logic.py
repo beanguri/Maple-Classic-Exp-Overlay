@@ -30,7 +30,7 @@ def new_log():
 
 
 def farm(log, t0, seconds, party=1, map_name="Rocky Road II", level=27, every=3, gap_at=None, gap=0, job=None, hidden=False,
-         mesos_at=None, window_at=None, misreads=(), estimated=False):
+         mesos_at=None, window_at=None, misreads=(), estimated=False, party_read=True):
     """100 EXP every `every` seconds (optionally with a pause); returns (end time, logs written).
     mesos_at(t) gives the last inventory look at time t, as the MesoTracker hands it on;
     window_at(t) when a shop, storage or trade window was last seen (or None)."""
@@ -44,7 +44,7 @@ def farm(log, t0, seconds, party=1, map_name="Rocky Road II", level=27, every=3,
         look = mesos_at(t) if mesos_at else None
         seen = window_at(t) if window_at else None
         entry = log.tick(t, map_name, level, party, look, job, hidden=hidden, window_at=seen, misreads=misreads,
-                         estimated=estimated)
+                         estimated=estimated, party_read=party_read)
         log.settle(t, True, look, misreads=misreads)
         if entry:
             logged.append(round(t - t0))
@@ -2097,6 +2097,28 @@ tr = pct_tracker(56, 25.0)
 tr.observe_percent(26.0, 56, "badge")
 res = tr.observe_percent(10.0, 56, "badge")
 check(f"...but a % that falls with the same level is still no level-up ({res})", tr.levels == 0)
+
+# ---- a party size never read (the list covered or unreadable since the start): runs stay on this PC (0.9.15, Q10)
+log, path = new_log()
+t, _ = farm(log, 0, 1000, party_read=False)
+check(f"a run whose party size was never read is saved, marked, and never shared ({len(log.runs)} runs)",
+      log.runs and all(r.get("party_unread") for r in log.runs) and log.unshared_runs() == [])
+check("...an older overlay can't share it either (its seal doesn't verify)",
+      all(r["seal"] == "party_unread" and not log.sealed(r, m._SEALED_RUN) for r in log.runs))
+log.save()
+again = m.AutoLog(15, path, path.with_suffix(".txt"))
+check("...and it survives saving and loading", again.runs and all(r.get("party_unread") for r in again.runs)
+      and again.unshared_runs() == [])
+log, _ = new_log()
+t, _ = farm(log, 0, 300, party_read=False)
+t, _ = farm(log, t, 700)                                     # the list is read (the same size) before the run ends
+check("a party size read before the run's end makes it shareable as usual",
+      log.runs and len(log.unshared_runs()) == len(log.runs) and not any(r.get("party_unread") for r in log.runs))
+log, _ = new_log()
+t, _ = farm(log, 0, 1000, estimated=True, party_read=False)
+check("estimated and party never read: kept the estimated seal, both marks, never shared",
+      log.runs and all(r["seal"] == "estimated" and r.get("party_unread") and r.get("estimated") for r in log.runs)
+      and log.unshared_runs() == [])
 
 # ---- EXP estimated from a % alone stays on this PC: marked in the log, never shared
 log, path = new_log()
