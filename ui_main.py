@@ -17,7 +17,8 @@ SHAPES = ("square", "wide", "bar")
 SHAPE_W = {"square": W, "wide": 560, "bar": 720}
 
 # state -> (dot colour, glows)
-STRIP_KEYS = ("rate", "pct", "level", "eta", "eta_time", "mesos", "net", "tiles", "state", "state_text", "message")
+STRIP_KEYS = ("rate", "pct", "level", "eta", "eta_time", "mesos", "net", "tiles", "state", "state_text", "message", "no_reset")
+NO_RESET_GOLD = "#b89a4e"                 # the dim gold "No Reset" word in the Bar shape (it has no status pill)
 STATES = {"waiting": ("#6c7280", False), "ready": ("#ffcf4a", False), "tracking": ("#5fe39a", True),
           "paused": ("#ffb27a", False), "alert": ("#ff7a5c", True)}
 
@@ -512,7 +513,8 @@ class Strip(tk.Frame):
         self.columnconfigure(0, minsize=g.px(self.W))
         self._photos, self._gphotos, self._digits = {}, {}, []
         self._start = None
-        self._m = dict(rate=None, pct=None, level=None, eta="", eta_time="", mesos="\u2014", net="", tiles={}, state="waiting", state_text="")
+        self._m = dict(rate=None, pct=None, level=None, eta="", eta_time="", mesos="\u2014", net="", tiles={}, state="waiting", state_text="",
+                       no_reset=False)
         x0, y0 = g.px(SIDE), g.px(self.top)
         self._card = c.create_image(x0, y0, anchor="nw")
         self._photos["card"] = g.photo(g.hero_panel(g.px(self.CW), g.px(self.card_h), 16))
@@ -544,6 +546,7 @@ class Strip(tk.Frame):
             self._eta = c.create_text(x0 + g.px(372), y0 + g.px(28), anchor="w", text="", fill="#e9c15a", font=theme.font("bold", 13))
             self._net = c.create_text(0, y0 + g.px(31), anchor="w", text="", fill=STATES["tracking"][0], font=theme.font("semibold", 10))
             self._div = [c.create_line(0, y0 + g.px(14), 0, y0 + g.px(42), fill="#232733") for _ in range(2)]
+            self._nr = c.create_text(0, y0 + g.px(31), anchor="w", text="", fill=NO_RESET_GOLD, font=theme.font("semibold", 10))
             self.pill = None
         # buttons, from the right: settings, compact (back to full), Start/Pause
         mid = g.px(27) if wide else y0 + g.px(self.card_h / 2)
@@ -627,6 +630,12 @@ class Strip(tk.Frame):
         c.coords(self._eta, x + gap, y)
         if c.bbox(self._eta)[2] > x0 + g.px(self.CW - 14):        # too long for the card: just the time
             c.itemconfigure(self._eta, text=m["eta_time"] or "")
+        c.itemconfigure(self._nr, text="No Reset" if m["no_reset"] else "")
+        if m["no_reset"]:                                         # after the level text, if there's room
+            box = c.bbox(self._eta)
+            c.coords(self._nr, (box[2] if box and c.itemcget(self._eta, "text") else x + gap) + g.px(10), y0 + g.px(31))
+            if c.bbox(self._nr)[2] > x0 + g.px(self.CW - 14):
+                c.itemconfigure(self._nr, text="")
 
     def _paint(self, changed):
         g, m, c = self.t.gfx, self._m, self.canvas
@@ -653,7 +662,8 @@ class Strip(tk.Frame):
             c.itemconfigure(self._eta, text=m["eta"])
             pct = m["pct"]
             c.itemconfigure(self._pct, text=f"{pct:.1f}%" if pct is not None else "")
-        if not wide and (everything or "rate" in changed or "mesos" in changed or "eta" in changed or "net" in changed):
+        if not wide and (everything or "rate" in changed or "mesos" in changed or "eta" in changed or "net" in changed
+                         or "no_reset" in changed):
             self._flow()
         if everything or "pct" in changed:
             frac = round((m["pct"] or 0) / 100 * 500) / 500
@@ -753,11 +763,16 @@ class MainView(tk.Frame):
         foot = tk.Frame(self, bg=bg)
         foot.grid(row=6, column=0, padx=g.px(SIDE), pady=pad(6, 0), sticky="we")
         foot.columnconfigure(0, weight=1)
+        foot.columnconfigure(0, weight=0)
+        foot.columnconfigure(2, weight=1)
         self.logging = Toggle(foot, theme, "Log this run", True, cb["logging"], bg, alt="Not logging")
         self.logging.grid(row=0, column=0, sticky="w")
-        self.best_btn = Button(foot, theme, text="Best maps", icon="link", kind="ghost", height=30, radius=10, size=12,
-                               command=cb["best"], bg=bg)
-        self.best_btn.grid(row=0, column=1, sticky="e")
+        self.no_reset = Toggle(foot, theme, "No Reset", False, cb.get("no_reset"), bg)
+        self.no_reset.grid(row=0, column=1, sticky="w", padx=(g.px(6), 0))
+        best_w = 22 + 12 + g.text_width("Best maps", "semibold", 12) / g.s      # (a ghost button: 6 px a side is room
+        self.best_btn = Button(foot, theme, text="Best maps", icon="link", kind="ghost", width=best_w, height=30,  # enough,
+                               radius=10, size=12, command=cb["best"], bg=bg)     # so both switches fit beside it)
+        self.best_btn.grid(row=0, column=2, sticky="e")
         self.message = Message(self, theme, bg)
         self.message.grid(row=7, column=0, padx=g.px(SIDE + 2), pady=pad(2, 14), sticky="we")
         self.foot_widgets = [self.tiles_row, self.more_btn, self.details, self.reset_btn, self.menu_btn, foot]
