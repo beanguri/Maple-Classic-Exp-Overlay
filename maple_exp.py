@@ -1912,7 +1912,8 @@ class ScreenReader:
         self.shadow = shadow.Shadow(find_exp_v2, digits_v2.read_layout_v2, fits_exp_table, exp_font.load, _view,
                                     lambda exc: self._part_failed("reader v2", exc),      # reader v2, beside this one
                                     nobar_seconds=shadow.NOBAR_BY_PART["exp"])
-        self.shadows = {"exp": self.shadow}         # one shadow per part (shadow.PARTS): mesos and party join below
+        self.shadow.main = True             # EXP: v2's answer decides, this reader's is the backup (_v2_decides)
+        self.shadows = {"exp": self.shadow}        # one shadow per part (shadow.PARTS): mesos and party join below
         for part in shadow.PARTS[1:]:
             self.shadows[part] = shadow.PartShadow(part, lambda exc, part=part: self._part_failed(f"reader v2 {part}", exc))
         self._part_shadows = []             # (part, what happened, v2's ms) of the other parts' shadows in this look
@@ -2267,17 +2268,18 @@ class ScreenReader:
                 return Reading("This window is covering the EXP bar. Move it.", exp_kind="covered")
             shot = capture.grab(wx + bx, wy + by, bw, bh)
             reading, lay = self._read(shot, where)
+            final = reading                 # (what's handed on, v2's answer if it has one; `reading` stays this reader's own)
             if reading.confident or self.misses < 2:        # (the 3rd miss searches again below: that look is the one handed on)
-                reading = self._shadow_look(capture, rect, shot, reading, lay, started)
+                final = self._shadow_look(capture, rect, shot, reading, lay, started, where)
             if reading.confident:
                 self.misses = 0
                 self._remember(lay, rect, shot)
-                return reading
+                return final
             # Not reading cleanly here (a dialog in the way, or this was the wrong spot):
             # after a few tries, look for the EXP text again.
             self.misses += 1
             if self.misses < 3:
-                return reading
+                return final
             self.box = None
 
         # Search the bottom of the window (and now and then the whole window).
@@ -2294,26 +2296,27 @@ class ScreenReader:
             else:
                 reading = Reading("Can't find the EXP bar at the bottom of the game. Is something covering it?",
                                   exp_kind="not_found")
-            return self._shadow_look(capture, rect, shot, reading, None, started)     # (v2 may still see it)
+            return self._shadow_look(capture, rect, shot, reading, None, started, where)     # (v2 may still see it)
         img, sx, sy = shot
         g = lay.gh
         lead = g if lay.exp else 5.5 * g       # (a %-only bar is found by its label, so the label stays in the spot)
         x0, x1 = max(0, int(lay.box[0] - lead)), min(img.shape[1], int(lay.box[2] + 6 * g))
         y0, y1 = max(0, int(lay.cy - 1.4 * g)), min(img.shape[0], int(lay.cy + 1.4 * g))
         reading, lay = self._read(shot, where, lay)
-        reading = self._shadow_look(capture, rect, shot, reading, lay, started)
+        final = self._shadow_look(capture, rect, shot, reading, lay, started, where)
         if reading.confident:             # only remember a spot whose digits match the game font
             self.box = (sx - wx + x0, sy - wy + y0, x1 - x0, y1 - y0)
             self.misses = 0
             self._remember(lay, rect, shot)
-        return reading
+        return final
 
-    def _shadow_look(self, capture, rect, shot, reading, lay, started):
-        """Runs reader v2 on the picture just read and notes in the Reading how the two compare (shadow.py).
-        It only adds to the Reading's shadow and v2_at, never changes what was read: anything going wrong here
-        leaves the Reading exactly as it was."""
+    def _shadow_look(self, capture, rect, shot, reading, lay, started, place):
+        """Runs reader v2 on the picture just read and notes in the Reading how the two compare (shadow.py). With
+        the EXP shadow as the main reader (shadow.main), v2's trusted answer becomes the Reading's (_v2_decides);
+        else, and whenever v2 has no answer, this reader's Reading stands (the backup). Anything going wrong here
+        leaves this reader's Reading exactly as it was."""
         try:
-            return self._shadow_look_v2(capture, rect, shot, reading, lay, started)
+            return self._shadow_look_v2(capture, rect, shot, reading, lay, started, place)
         except Exception as e:
             self.shadow.failed(e)           # (counted like any v2 error, and v2 rests a minute)
             return reading._replace(shadow=("errors", None))
@@ -2327,7 +2330,7 @@ class ScreenReader:
             return None
         return got
 
-    def _shadow_look_v2(self, capture, rect, shot, reading, lay, started):
+    def _shadow_look_v2(self, capture, rect, shot, reading, lay, started, place):
         if not shot or self.shadow.idle():
             return reading
         wx, wy, ww, wh = rect
@@ -2372,13 +2375,30 @@ class ScreenReader:
             if self.v2_spot is None or max(abs(a - b) for a, b in zip(box, self.v2_spot)) > 3:
                 self.v2_spot = box
                 at = (key, list(box))
-        return reading._replace(shadow=(res.category, res.ms), v2_at=at,
-                                shadow_why=res.why if res.category == "old_only" else None)
+        reading = reading._replace(shadow=(res.category, res.ms), v2_at=at,
+                                   shadow_why=res.why if res.category == "old_only" else None)
+        if self.shadow.main and res.answer is not None:
+            reading = self._v2_decides(reading, res.answer, place, lay is not None)
+        return reading
+
+    @staticmethod
+    def _v2_decides(reading, got, place, found):
+        """The Reading with reader v2's answer (it fits the EXP table, or is a percentage on a %-only bar) in place of
+        this reader's. `place`: the Reading's where (the game window); `found`: this reader found the bar. A percentage-only answer only counts when this reader saw a
+        %-only bar too, or no bar at all: v2 missing the number on a normal bar must not switch the tracker to
+        estimating. (The tracker checks it like any reading: EXP table, level, a level-up seen twice.)"""
+        exp, pct = got
+        if exp is None and found and not reading.percent_only:
+            return reading
+        text = f"[{pct:.2f}%] (percentage only)" if exp is None else f"{exp:,} [{pct:.2f}%]"
+        return reading._replace(where=place, candidates=[got], confident=True, text=text, percent_only=exp is None,
+                                exp_kind="read")
 
     def _read(self, shot, where, lay=None):
-        """Returns (Reading, Layout or None). Its exp_kind (for health reports): read = the templates gave a
-        number that fits (or a clear percentage); tesseract = only Tesseract's candidate is left; unclear = the
-        bar is there but nothing can be trusted; not_found = no bar (or off screen)."""
+        """Today's reader (the EXP backup since 0.9.15: _v2_decides). Returns (Reading, Layout or None). Its exp_kind
+        (for health reports): read = the templates gave a number that fits (or a clear percentage); tesseract = only
+        Tesseract's candidate is left; unclear = the bar is there but nothing can be trusted; not_found = no bar (or
+        off screen)."""
         if not shot:
             return Reading(_problem(where, "The EXP bar is off screen."), exp_kind="not_found"), None
         img = shot[0]
