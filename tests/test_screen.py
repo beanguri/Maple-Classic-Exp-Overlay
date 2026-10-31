@@ -2386,5 +2386,20 @@ res = live.shadow_part("mesos", 24698, 4.0, lambda: live._v2_mesos(v2_box_scene(
 check("mesos v2: a different number is disagree (counted, never shown to the player)", res.category == "disagree")
 
 
+# ---- the bottom of the game window is off every screen: the hint
+S1080 = [(0, 0, 1920, 1080)]
+check("off-screen hint: a 1920x1228 window on a 1920x1080 screen", m.bottom_off_screen((0, 0, 1920, 1228), S1080))
+check("off-screen hint: a 1920x1080 window fits, no hint", not m.bottom_off_screen((0, 0, 1920, 1080), S1080))
+check("off-screen hint: a window across two stacked screens, no hint",
+      not m.bottom_off_screen((0, 200, 1920, 1500), [(0, 0, 1920, 1080), (0, 1080, 1920, 1080)]))
+check("off-screen hint: a window on a second screen to the right, no hint",
+      not m.bottom_off_screen((1920, 0, 1920, 1080), [(0, 0, 1920, 1080), (1920, 0, 2560, 1440)]))
+check("off-screen hint: scaling not 100% (physical pixels on both sides), 2880x1620 window on a 2880x1620 screen",
+      not m.bottom_off_screen((0, 0, 2880, 1620), [(0, 0, 2880, 1620)]))
+check("off-screen hint: the window moved down past the screen's bottom", m.bottom_off_screen((0, 300, 1920, 1080), S1080))
+check("off-screen hint: unknown screens or window, no hint",
+      not m.bottom_off_screen((0, 0, 1920, 1228), []) and not m.bottom_off_screen(None, S1080))
+
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

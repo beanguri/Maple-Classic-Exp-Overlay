@@ -1834,6 +1834,24 @@ def _view(img, lay):
     return img[y0:y1, x0:x1].copy(), boxes
 
 
+def bottom_off_screen(rect, screens):
+    """True when the bottom edge of the game window (where the EXP bar sits) lies on no screen: `rect` is
+    (left, top, width, height), `screens` a list of (left, top, width, height), all in physical pixels. A window across
+    two stacked screens, or one that fits, is not. Unknown screens: False."""
+    if not rect or not screens:
+        return False
+    wx, wy, ww, wh = rect
+    y = wy + wh - 1
+    for fx in (0.25, 0.5, 0.75):
+        x = wx + int(ww * fx)
+        if any(l <= x < l + w and t <= y < t + h for l, t, w, h in screens):
+            return False
+    return True
+
+
+OFF_SCREEN_TEXT = "The bottom of the game window is off the screen, so the EXP bar can't be seen."
+
+
 def _problem(where, text):
     """A status message about reading the EXP bar ("where" only matters for a selected area)."""
     return f"Selected area: {text}" if where == "Selected area" else text
@@ -2039,6 +2057,10 @@ class ScreenReader:
             return Reading("MapleStory is minimized. Bring the game back up.", exp_kind="no_window")
         else:
             reading = self._read_window(capture, rect)
+            if reading.exp_kind == "not_found":         # (v2 may have read the bar: then this isn't "not found")
+                monitors = getattr(getattr(capture, "sct", None), "monitors", None) or []
+                if bottom_off_screen(rect, [(m["left"], m["top"], m["width"], m["height"]) for m in monitors[1:]]):
+                    reading = reading._replace(where=OFF_SCREEN_TEXT)
         if reading.percent_only and self.mode == "region":
             # (a selected area has no game window around it: no badge to find, so typing the level in is open at once)
             self.level_failures = max(self.level_failures, LEVEL_FAILS_FOR_FALLBACK)
