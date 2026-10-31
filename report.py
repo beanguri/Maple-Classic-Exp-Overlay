@@ -220,7 +220,7 @@ def part_answer_text(a):
 
 
 def shadow_lines(s):
-    """The "Reader v2 (test)" part of the details: what the new reader did beside the old one. `s` is one part's
+    """The "Reader v2" parts of the details: what the new reader did beside the old one. `s` is one part's
     shadow facts (the EXP bar's, or a part's from shadow_parts)."""
     c = s.get("counts") or {}
     text = answer_text if s.get("name", "exp") == "exp" else part_answer_text
@@ -282,11 +282,11 @@ def details(f):
             _kv("Last look finished", f"{int(h['age'])} s ago" if h.get("age") is not None else "never"),
             _kv("Last error", h.get("last_error") or "none"), ""]
     out += ["== Potions =="] + potion_lines(f.get("potions")) + [""]
-    out += ["== Reader v2 (test) =="] + shadow_lines(f.get("shadow") or {}) + [""]
-    for part, title in (("mesos", "Mesos"), ("party", "Party size")):
+    out += ["== Reader v2 (EXP: decides, the older reader is the backup) =="] + shadow_lines(f.get("shadow") or {}) + [""]
+    for part, title in (("mesos", "Reader v2 (test): Mesos"), ("party", "Reader v3 (decides): Party size")):
         facts = (f.get("shadow_parts") or {}).get(part)
         if facts:
-            out += [f"== Reader v2 (test): {title} =="] + shadow_lines(facts) + [""]
+            out += [f"== {title} =="] + shadow_lines(facts) + [""]
     out += ["== Settings ==", _kv("Settings", ", ".join(f"{k} {v}" for k, v in s.items())), ""]
     wrong = looks_wrong(f)
     out += ["== Things that look wrong =="] + ([f"- {w}" for w in wrong] if wrong else ["- Nothing stands out."]) + [""]

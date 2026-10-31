@@ -119,7 +119,7 @@ if (sqlite) {
 // Only released versions are counted (src/released.js); other versions get one line of their own.
 const q = queries("2026-10-01T00:00:00.000Z");
 for (const k of ["groups", "days", "errors", "disagree", "worst"]) {
-  assert.ok(q[k].includes("IN ('0.9.0-beta'") && q[k].includes("'0.9.14-beta')"), `${k} counts released versions only`);
+  assert.ok(q[k].includes("IN ('0.9.0-beta'") && q[k].includes(`'${RELEASED.at(-1)}')`), `${k} counts released versions only`);
 }
 assert.ok(/NOT \(json_extract\(body,'\$\.version'\) IN \(/.test(q.unknown), "the unknown query takes the others");
 const forks = summarize({ ...data, unknown: [{ v: "0.9.16-beta", installs: 1 }, { v: "1.0.0\x1b[2J", installs: 3 }] }, 7).join("\n");
@@ -132,7 +132,7 @@ const VERSION = fs.readFileSync(new URL("../maple_exp.py", import.meta.url), "ut
 assert.ok(RELEASED.includes(VERSION), `maple_exp.py VERSION ${VERSION} is missing from server/src/released.js (release step)`);
 assert.equal(versionStatus(VERSION), "ok");
 for (const [v, want] of [["0.9.14-beta", "ok"], ["0.9.0-beta", "ok"], ["0.9.14", "refused"], ["0.9.14-myfork", "refused"],
-  ["0.8.9-beta", "refused"], ["", "refused"], [null, "refused"], ["0.9.15-beta", "later"], ["0.10.0", "later"], ["1.0.0", "later"]]) {
+  ["0.8.9-beta", "refused"], ["", "refused"], [null, "refused"], ["0.9.99-beta", "later"], ["0.10.0", "later"], ["1.0.0", "later"]]) {
   assert.equal(versionStatus(v), want, `versionStatus(${JSON.stringify(v)})`);
 }
 

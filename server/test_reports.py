@@ -189,7 +189,7 @@ for v in ("0.9.14-myfork", "0.9.14", "0.8.0-beta", "0.9.13-beta.1"):
     status, a = post("/api/report", dict(report_ok, version=v), ip=fresh())
     check(f"Send report from {v}: 400 version", status == 400 and a == {"error": "version"})
     check("...and neither wrote anything", everything() == before)
-for v in ("0.9.15-beta", "0.9.16-beta", "1.0.0"):
+for v in ("0.9.99-beta", "0.10.0-beta", "1.0.0"):          # (newer than any release for a long while)
     before = everything()
     status, a = post("/api/health", dict(health_full, id="f" + "1" * 15, version=v), ip=fresh())
     check(f"health from a newer {v}: try later (429 retry), not dropped", status == 429 and a == {"retry": True, "why": "version"})

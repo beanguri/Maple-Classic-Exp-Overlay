@@ -7,7 +7,7 @@
 // for good, so real players lose nothing if the deploy comes late.
 export const RELEASED = [
   "0.9.0-beta", "0.9.1-beta", "0.9.2-beta", "0.9.3-beta", "0.9.4-beta", "0.9.5-beta", "0.9.6-beta", "0.9.7-beta",
-  "0.9.8-beta", "0.9.9-beta", "0.9.10-beta", "0.9.11-beta", "0.9.12-beta", "0.9.13-beta", "0.9.14-beta",
+  "0.9.8-beta", "0.9.9-beta", "0.9.10-beta", "0.9.11-beta", "0.9.12-beta", "0.9.13-beta", "0.9.14-beta", "0.9.15-beta",
 ];
 
 /** [0, 9, 11] for "0.9.11-beta"; [] when it isn't a version. */

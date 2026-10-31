@@ -75,7 +75,7 @@ PLATFORM = create_platform()
 PLATFORM.setup_process()
 cv2.setNumThreads(1)
 
-VERSION = "0.9.14-beta"
+VERSION = "0.9.15-beta"
 WINDOW_TITLE = "Maple Classic Exp Overlay"    # the version is shown in Settings
 OLD_TITLES = ("Maple EXP/hr",)               # what versions before 0.9.3 were called
 
@@ -141,7 +141,16 @@ SHAPE_BLURBS = {"square": "The narrow card: the big number, the level bar and St
                 "wide": "Longer sideways: the level bar on top and four numbers in a row.",
                 "bar": "One thin strip with the main numbers and a slim level bar."}
 # What's new, shown once after updating to a version (plain words, newest changes only). A version with no entry shows nothing.
-WHATS_NEW = {"0.9.14-beta": (
+WHATS_NEW = {"0.9.15-beta": (
+    (None, None, (
+        ("head", "EXP and party size, read the new way"),
+        "The EXP number and your party size are now read with the game's own font and the exact shape of the party "
+        "list's HP bars. The older readers stay on as a backup. Checked on recordings of real play: tell me if a number looks off.",
+        "If the party list can't be seen for a moment, your party size is kept (the status line says so).",
+        ("head", "Clearer messages"),
+        "If the bottom of the game window is off your screen, the overlay says so instead of \"can't find the EXP bar\".",
+        "Send to the developer now shows a report number after sending: give it on GitHub or Reddit if you'd like a reply.")),),
+    "0.9.14-beta": (
     (None, None, (
         ("head", "Potions on every bar"),
         "Potion counts now work on the controller bar (Standard or Cross-Style) as well as the keyboard bar, with the "

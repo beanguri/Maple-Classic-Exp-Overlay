@@ -353,7 +353,7 @@ for old in sorted((Path(__file__).parent / "upgrade").iterdir()):
     check(f"updating from {old.name}: every log line, run, rename and setting is kept",
           len(log.entries) == len(before["entries"]) and all(same) and not any(log.edited(e) for e in log.entries)
           and len(log.runs) == len(before.get("runs", []))
-          and all(log.sealed(r, m._SEALED_RUN) or r.get("estimated") for r in log.runs)      # (an estimated run's seal is meant not to verify)
+          and all(log.sealed(r, m._SEALED_RUN) or r.get("estimated") or r.get("party_unread") for r in log.runs)   # (their seals are meant not to verify)
           and log.aliases == before["aliases"] and not list(folder.glob("exp_log.damaged-*"))
           and (cfg["pos"], cfg["transparency"], cfg["gap_seconds"], cfg["topmost"]) == ([5300, 800], 30, 20, False))
     # the health question is still to come (nothing answers it for them), and an answer, once saved, is kept

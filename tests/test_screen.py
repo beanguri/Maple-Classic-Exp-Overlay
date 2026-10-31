@@ -1829,7 +1829,7 @@ facts = dis.shadow.facts()
 check("shadow: a disagreement keeps the EXP bar crop and shows up in the bug report",
       got.shadow[0] == "disagree" and len(dis.shadow.kept) == 1 and dis.shadow.kept[0]["image"].size > 0 and facts["diffs"]
       and "Disagreed" in "\n".join(report.shadow_lines(facts)) and "1,234 [12.34%]" in "\n".join(report.shadow_lines(facts)))
-check("shadow: the details text has the 'Reader v2 (test)' part", "== Reader v2 (test) ==" in report.details({"shadow": facts}))
+check("shadow: the details text has the 'Reader v2 (EXP' part", "== Reader v2 (EXP: decides" in report.details({"shadow": facts}))
 
 # ---- shadow mode, audit A03: the counts add up, v2's own grab is timed, an idle v2 grabs nothing
 import threading  # noqa: E402
@@ -2387,7 +2387,7 @@ check("UI size: what mode_from_gh answers for the sizes seen (Default 1080p, Ide
 pf = r.shadows["mesos"].facts()
 text = report.details({"shadow": shadow_reader(True).shadow.facts(), "shadow_parts": {"mesos": pf, "party": r.shadows["party"].facts()}})
 check("shadow parts: the details text has a 'Reader v2 (test)' part for each part",
-      "== Reader v2 (test): Mesos ==" in text and "== Reader v2 (test): Party size ==" in text and "Last answers: old 1,500, v2 1,500" in text
+      "== Reader v2 (test): Mesos ==" in text and "== Reader v3 (decides): Party size ==" in text and "Last answers: old 1,500, v2 1,500" in text
       and "Old reader only, by why v2 didn't read: not_found 0, unclear 0" in text)
 check("shadow parts: the details text still works without them (older facts)", "Reader v2 (test): Mesos" not in report.details({"shadow": {}}))
 # ---- reader v2 for the mesos box rides beside today's reader (ticket 13): same pictures, no extra grabs

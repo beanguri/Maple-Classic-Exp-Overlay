@@ -1,0 +1,22 @@
+{
+  "gap_seconds": 20,
+  "transparency": 30,
+  "topmost": false,
+  "check_updates": true,
+  "skip_version": "",
+  "ui_scale": 100,
+  "compact": false,
+  "hotkeys_on": true,
+  "details": false,
+  "compact_shape": "square",
+  "seen_version": "0.9.15-beta",
+  "potions_on": true,
+  "potion_prices": {},
+  "shadow_reader": true,
+  "share_runs": false,
+  "share_health": false,
+  "pos": [
+    5300,
+    800
+  ]
+}

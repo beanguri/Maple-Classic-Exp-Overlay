@@ -391,8 +391,9 @@ for top in opened:
             texts.append(str(w0.cget("text")))
         except Exception:
             pass
-check("this version's What's new window opens and speaks of health reports",
-      len(opened) == 1 and any("Health reports" in t for t in texts))
+first_head = next(x[1] for x in m.WHATS_NEW[m.VERSION][0][2] if isinstance(x, tuple) and x[0] == "head")
+check(f"this version's What's new window opens with its first heading ({first_head})",
+      len(opened) == 1 and any(first_head in t for t in texts))
 for top in opened:
     top.destroy()
 

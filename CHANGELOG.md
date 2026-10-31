@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.15-beta
+
+**EXP and party size, read the new way**
+- The EXP number is now read with the game's own font (the reader that ran as a test since 0.9.13 and agreed with the old one on almost every look). When it can't read the bar, the older reader still does, with the same checks as before.
+- The party size is now counted by the exact shape of the party list's HP bars and the panel's lines around them. The older count is still used at UI sizes the new one can't read (fullscreen 900-1024 pixels tall with UI Size Default).
+- If the party list is covered or gone for a moment, the last party size is kept for about 15 seconds, and the status line says "Can't see the party list: party size kept at N". If it can't be read at all, no party size is guessed.
+- A 15-minute run is only shared once the overlay has read your party size (before that, "solo" was only a default). Such a run still counts in your log.
+- Both new readers were checked on recordings of real play (0 wrong EXP numbers on 152 pictures in 56 kinds of picture damage; 1 party size off by a first look out of 1,507 pictures, against 11 for the old count).
+
+**Clearer messages and bug reports**
+- If the bottom of the game window is off every screen, the status says so instead of "can't find the EXP bar".
+- The warning that the game window is bigger than your screen no longer shows when it fits on another screen (a portrait screen next to a wide one, for example).
+- Send to the developer shows a report number after sending, with buttons for GitHub issues and Reddit if you'd like a reply.
+- A bug report now says how the potion bar was read: the layout, the UI size, each slot's item and count (or why it wasn't read), the potion cost line and which shipped items have your own price (never the prices).
+
+**For people who change the code**
+- The README explains what to change before sharing a changed copy (its own website address and version). The website takes runs, health reports and bug reports only from released versions of the overlay.
+
 ## 0.9.14-beta
 
 **Potions on every bar**
