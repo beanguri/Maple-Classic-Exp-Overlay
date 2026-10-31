@@ -1003,6 +1003,7 @@ try:
     check("a clear EXP bar is read as usual while Tesseract is broken", clear.confident and clear.candidates)
     r = part_reader(templates=False)       # (no templates: the digits are never sure, so the Tesseract backup is asked)
     r._game_rect = lambda: (0, 0, fw, fh)
+    r.shadow.main = False                  # (today's reader on its own: v2 as the main reader would read this bar)
     got = r.read(fscreen)
     check("an unsure bar with a broken Tesseract still gives a look (no exception)", got.where and not got.confident)
     check("...and counts it as a Tesseract part failure",
@@ -1244,6 +1245,7 @@ def kind_of_look(templates=True, tesseract=None, setup=None):
     r = part_reader(templates)
     r._game_rect = lambda: (0, 0, fw, fh)
     r.own_rect = (-5000, -5000, 10, 10)
+    r.shadow.main = False           # (today's reader's own kinds; v2 deciding is checked with the shadow tests)
     if setup:
         setup(r)
     saved = m.tesseract_candidates
@@ -1570,6 +1572,11 @@ try:
     unit = shadow_unit(GOOD, cost_ms=100)        # v2 costs 10 times today's reader: off for the session
     cats = [unit.look(img, GOOD, 10.0).category for _ in range(shadow_mod.GUARD_MIN + 10)]
     check("shadow CPU guard: costing 8 times today's reader turns v2 off for the session", unit.stopped and cats[-1] == "skipped")
+    unit = shadow_unit(GOOD, cost_ms=100)
+    unit.main = True                             # (EXP since 0.9.15: v2 decides, so the guard must never switch it off)
+    cats = [unit.look(img, GOOD, 10.0).category for _ in range(shadow_mod.GUARD_MIN + 10)]
+    check("shadow CPU guard: a main reader is never thinned or stopped, even at 10 times today's cost",
+          not unit.stopped and not unit.thinned and cats.count("agree") == len(cats))
 
     # Today's reader sees no bar (a menu, the login screen): v2's whole-strip search costs many times today's there
     # (0.15-1 s on a busy 4K/5K picture), so it searches at most every NOBAR_SECONDS and the CPU guard leaves it out.
@@ -1670,10 +1677,11 @@ before_tess = (m.TESS, m.tesseract_ok)
 m.TESS, m.tesseract_ok = None, False
 
 
-def shadow_reader(on=True):
-    r = part_reader()
+def shadow_reader(on=True, main=True, templates=True):
+    r = part_reader(templates)
     r._game_rect = lambda: (0, 0, fw, fh)
     r.shadow.on = on
+    r.shadow.main = main
     return r
 
 
@@ -1700,10 +1708,41 @@ fresh.saved_v2 = {looks_on[0].v2_at[0]: looks_on[0].v2_at[1]}
 check("shadow: a spot saved in the config is used as the first hint (and found at once)", fresh.read(fscreen).shadow[0] == "agree")
 
 grey = FakeScreen(cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR))
-g_on, g_off = shadow_reader(True), shadow_reader(False)
-got_on, got_off = g_on.read(grey), g_off.read(grey)
-check("shadow: a greyscale picture today's reader can't find but v2 reads is 'v2_only', and today's Reading is untouched",
+g_on, g_off, g_test = shadow_reader(True, main=False), shadow_reader(False), shadow_reader(True)
+got_on, got_off, got_main = g_on.read(grey), g_off.read(grey), g_test.read(grey)
+check("shadow: a greyscale picture today's reader can't find but v2 reads is 'v2_only', and today's Reading is untouched (v2 not main)",
       got_on.shadow and got_on.shadow[0] == "v2_only" and not got_on.confident and same_input(got_on, got_off) and got_on.exp_kind == "not_found")
+check("EXP v2 main: ...with v2 as the main reader, v2's answer is the Reading (sure, 'read', the window as where)",
+      got_main.shadow[0] == "v2_only" and got_main.confident and got_main.candidates == [looks_on[0].candidates[0]]
+      and got_main.exp_kind == "read" and got_main.where == f"MapleStory window {fw}x{fh}" and not got_main.percent_only
+      and got_main.text == looks_on[0].text)
+
+# today's reader can't read the digits (no templates), v2 can: v2 decides every look, and today's reader still
+# never remembers a spot it couldn't read itself (the backup keeps searching on its own terms)
+big = cv2.imread(str(FRAMES / "exp_full-1920x1080.png"))       # (a whole game window: the bottom strip is real)
+blind = shadow_reader(True, templates=False)
+blind._game_rect = lambda: (0, 0, big.shape[1], big.shape[0])
+big_want = shadow_reader(False)
+big_want._game_rect = blind._game_rect
+want_big = big_want.read(FakeScreen(big))
+seen = [blind.read(FakeScreen(big)) for _ in range(4)]
+check("EXP v2 main: today's reader unsure, v2 sure: every look is v2's answer",
+      want_big.confident and all(x.confident and x.candidates == want_big.candidates and x.shadow[0] == "v2_only" for x in seen))
+check("EXP v2 main: ...and today's reader never remembers that spot as its own", blind.box is None)
+blind_off = shadow_reader(False, templates=False)
+check("EXP v2 main: the kill switch (shadow_reader off) leaves today's reader alone, unsure",
+      not blind_off.read(fscreen).confident)
+
+pct = shadow_reader(True)
+pct.shadow.read = lambda font, lay: (None, 50.0)
+got, want = pct.read(fscreen), shadow_reader(False).read(fscreen)
+check("EXP v2 main: v2 seeing only a % where today's reader saw a normal bar never switches the bar to %-only",
+      same_input(got, want) and not got.percent_only and got.confident)
+alone = m.ScreenReader._v2_decides(m.Reading("no bar", exp_kind="not_found"), (None, 50.0), "here", False)
+check("EXP v2 main: ...but where today's reader saw no bar, v2's % is taken as a %-only bar",
+      alone.percent_only and alone.confident and alone.candidates == [(None, 50.0)] and alone.text == "[50.00%] (percentage only)")
+both = m.ScreenReader._v2_decides(m.Reading("x", [(None, 49.0)], True, percent_only=True), (None, 50.0), "here", True)
+check("EXP v2 main: ...and where both see a %-only bar, v2's % decides", both.candidates == [(None, 50.0)] and both.percent_only)
 
 bad = shadow_reader(True)
 bad.shadow.read = lambda font, lay: 1 / 0
@@ -1722,6 +1761,12 @@ dis = shadow_reader(True)
 dis.shadow.read = lambda font, lay: (1234, 12.34)
 dis.shadow.fits = lambda e, p: True
 got = dis.read(fscreen)
+check("EXP v2 main: when both are sure and disagree, v2's answer is the Reading", got.candidates == [(1234, 12.34)] and got.confident)
+backup = shadow_reader(True)
+backup.shadow.read = lambda font, lay: None
+got_b = backup.read(fscreen)
+check("EXP v2 main: when v2 has no answer, today's reader's answer stands (the backup)",
+      got_b.shadow[0] == "old_only" and same_input(got_b, shadow_reader(False).read(fscreen)) and got_b.confident)
 facts = dis.shadow.facts()
 check("shadow: a disagreement keeps the EXP bar crop and shows up in the bug report",
       got.shadow[0] == "disagree" and len(dis.shadow.kept) == 1 and dis.shadow.kept[0]["image"].size > 0 and facts["diffs"]
@@ -1791,7 +1836,7 @@ for how in ("stopped", "paused", "skip"):
     scr = SlowScreen(full)
     idle.read(scr)
     if how == "stopped":
-        idle.shadow.stopped = True
+        idle.shadow.stopped, idle.shadow.main = True, False      # (only a shadow that isn't main can be stopped)
     elif how == "paused":
         idle.shadow.pause_until = real_time.monotonic() + 100
     else:

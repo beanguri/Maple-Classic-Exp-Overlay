@@ -1,5 +1,6 @@
 """Shadow mode: reader v2 (find the EXP bar by shape, read it by drawing the game's font) runs beside today's
-reader and only notes whether the two agree. It never changes a Reading, the tracker, the log or what's shared.
+reader and notes whether the two agree. The shadow itself never changes a Reading, the tracker, the log or what's
+shared; a part whose shadow is `main` (EXP since 0.9.15) takes v2's answer from the Result, today's reader is its backup.
 
 The reader hands in the picture it just read, its own answer and how long it took; this keeps the counts,
 the last few disagreements (with their pictures, in memory only) and guards the CPU: if v2 costs more than
@@ -71,6 +72,7 @@ class _Guarded:
     def __init__(self, on_error, timer=time.perf_counter, nobar_seconds=NOBAR_SECONDS):
         self.on_error, self.timer, self.nobar_seconds = on_error, timer, nobar_seconds
         self.on = True                  # the kill switch (config shadow_reader)
+        self.main = False               # v2 is the part's main reader: the CPU guard never thins or stops it
         self.counts = Counter()         # CATEGORIES, plus "runs"; for EXP also "grabs" (strips v2 grabbed itself) and
                                         # "ticks" (agreements found by the recheck: EXP changed between the two grabs)
         self.why = Counter()            # old_only looks by v2's reason (WHY_COUNTED)
@@ -92,6 +94,8 @@ class _Guarded:
 
     def _allowed(self):
         """Should v2 run at this look? (A look it skips for the CPU is counted as skipped.)"""
+        if self.main:
+            return True
         if self.stopped:
             return False
         ratio = self._ratio()

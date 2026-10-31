@@ -33,8 +33,8 @@ MAX_BUCKET = 1000
 MAX_LOOK_GAP = 5.0          # seconds of "tracking" added for one look is at most this
 
 # Look categories (what `exp_kind` of a Reading means; set where the reader makes the Reading):
-#   read       the digit templates gave a number that fits the EXP table (or a clear percentage, on a
-#              percentage-only bar)
+#   read       a number that fits the EXP table (or a clear percentage, on a percentage-only bar): reader v2's
+#              (the main EXP reader since 0.9.15) or, when v2 has none, the digit templates'
 #   tesseract  the templates weren't sure and the best candidate came from Tesseract
 #   unclear    the bar was found but no number can be trusted
 #   not_found  no EXP bar found (or its picture is off screen)
