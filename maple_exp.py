@@ -135,7 +135,7 @@ MAX_COORD = 100_000        # a screen position or size in the settings; more is 
 DEFAULTS = {"gap_seconds": 15, "transparency": 0, "topmost": True,
             "check_updates": True, "skip_version": "", "ui_scale": 100, "compact": False, "hotkeys_on": True,
             "details": False, "compact_shape": "square", "seen_version": "",
-            "potions_on": True, "potion_prices": {}, "shadow_reader": True}
+            "potions_on": True, "potion_prices": {}, "shadow_reader": True, "no_reset": False}
 SHAPE_LABELS = {"square": "Square", "wide": "Wide", "bar": "Bar"}
 SHAPE_BLURBS = {"square": "The narrow card: the big number, the level bar and Start/Pause.",
                 "wide": "Longer sideways: the level bar on top and four numbers in a row.",
@@ -524,8 +524,13 @@ def post_health(body, timeout=15):
 # Shift+1 to 4 by default (changeable in Settings). How they're caught is up to the OS
 # (PLATFORM.create_hotkeys); they're only on while MapleStory or the overlay is in front.
 
-HOTKEY_ACTIONS = {"start": "Start / Pause", "reset": "Reset", "skip": "Don't log", "compact": "Compact"}
-DEFAULT_HOTKEYS = {"start": "Shift+1", "reset": "Shift+2", "skip": "Shift+3", "compact": "Shift+4"}
+HOTKEY_ACTIONS = {"start": "Start / Pause", "reset": "Reset", "skip": "Don't log", "compact": "Compact",
+                  "no_reset": "No Reset"}
+DEFAULT_HOTKEYS = {"start": "Shift+1", "reset": "Shift+2", "skip": "Shift+3", "compact": "Shift+4", "no_reset": ""}
+NO_RESET_ON = ("No Reset is on: changing maps or going AFK won't start new numbers. "
+               "These runs stay on this PC (not sent to mcwo.app).")
+NO_RESET_OFF = "No Reset is off: a new map starts new numbers again."
+MAPS_JOIN = "/"           # a log line or run over several maps (No Reset): "Map A/Map B" (no real map name has one)
 
 
 # --------------------------------------------------------------------------- screenshots
@@ -3440,7 +3445,9 @@ class Session:
     After Start it tracks until Pause is pressed, except that it pauses by itself when no
     EXP comes in for `gap` seconds or you leave the map, and carries on at the next EXP
     gain: from zero if that's on a different map, so the numbers are always for the map
-    you're on. Time spent paused never counts, and an idle pause rewinds the clock to the
+    you're on. With `no_reset` (farming across maps) a map change neither pauses nor starts
+    new numbers, and a hidden map name doesn't pause either: only Pause, Reset and the idle
+    pause still apply. Time spent paused never counts, and an idle pause rewinds the clock to the
     last EXP gain. The gain that ends a pause starts the clock again rather than counting,
     just like a log stretch's first gain.
     """
@@ -3454,6 +3461,7 @@ class Session:
         self.map = None             # the map these numbers are for
         self.here = None            # the map you're on now
         self.last_gain = None
+        self.no_reset = False       # No Reset: the numbers carry on across maps
 
     def start(self, now):
         self.on, self.waiting, self.last_gain = True, None, now
@@ -3497,9 +3505,10 @@ class Session:
             self.last_gain = now
         elif self.on and self.waiting and self.waiting != "blind" and rose:
             if self.map and self.here and self.here != self.map:
-                t.new_session()             # a different map: its own numbers
-                self.meso.reset()
-                self.potions.reset()
+                if not self.no_reset:
+                    t.new_session()         # a different map: its own numbers
+                    self.meso.reset()
+                    self.potions.reset()
                 self.map = self.here
             self.waiting = None
             self.last_gain = now
@@ -3516,7 +3525,7 @@ class Session:
         closed it): you may have changed maps without it noticing, so it pauses instead of
         carrying on under the old name. It carries on once the name can be read again."""
         self.here = None
-        if self.waiting == "blind" or not self.on:
+        if self.waiting == "blind" or not self.on or self.no_reset:     # (No Reset: another map changes nothing)
             return
         if self.exp.running:
             self._wait("blind")
@@ -3534,6 +3543,10 @@ class Session:
             return
         if self.map is None:
             self.map = name
+        elif name != self.map and self.no_reset:
+            if self.waiting == "idle":
+                self.meso.pause()           # (off the map while idle: a shop trip may follow, as below)
+            self.map = name                 # the numbers carry on: they're for every map since Start
         elif name != self.map:              # left the map
             if self.exp.running:
                 self._wait("map")
@@ -3724,6 +3737,9 @@ class AutoLog:
     Alongside, a run goes on as long as the stretches do (a level-up doesn't stop it, a new
     map or party size does). Every full 15 minutes is saved as a run of its own.
 
+    With `no_reset` on, a map change doesn't start over: the stretch (and run) goes on and is logged under every
+    map it covered ("Map A/Map B"). A run that had No Reset on at any moment stays on this PC (seal "no_reset").
+
     Every change re-reads the log file first and saves straight away, so lines written by
     anyone else (another copy of the app, or by hand) are never overwritten.
     """
@@ -3738,6 +3754,7 @@ class AutoLog:
         self.looks, self.epoch = [], None             # inventory looks (when, mesos gained so far)
         self.pending = None                           # a finished run waiting for a look after its end
         self._misreads = ()                           # the MesoTracker's misreads, as last given
+        self.no_reset = False                         # No Reset: map changes don't start over (see set_no_reset)
         version = self._load()
         if version < 2:
             def clear_old_mesos():                    # logged by the old, unreliable mesos counting
@@ -3874,8 +3891,20 @@ class AutoLog:
         return result
 
     # ---- tracking
+    def set_no_reset(self, on):
+        """No Reset switched on or off. A run going on when it's switched on had it too (it stays on this PC)."""
+        self.no_reset = bool(on)
+        if on and self.run is not None:
+            self.run["no_reset"] = True
+
+    @staticmethod
+    def _maps_label(maps):
+        label = MAPS_JOIN.join(sorted(maps))             # (sorted: the same maps always make the same line)
+        return label if len(label) <= 200 else label[:196] + MAPS_JOIN + "..."    # (a line's map has room for 200)
+
     def reset_clock(self):
         self.start = self.last_gain = self.block_map = self.block_party = self.meso0 = self.pot0 = None
+        self.block_maps, self.block_reads = [], []      # every map (and its name as read) the stretch covered
         self.block_exp = 0
         self.run = None                                  # the 15-minute run going on, if any
         self.chain = None                                # when the runs going on straight after each other began
@@ -3889,7 +3918,7 @@ class AutoLog:
             else:
                 self.block_exp += amount
             if self.run is None:                             # ...and a run's
-                self.run = {"start": now, "exp": 0, "map": None}
+                self.run = self._new_run(now)
                 self.chain = now if self.chain is None else self.chain
             elif not starts:
                 self.run["exp"] += amount
@@ -3921,10 +3950,13 @@ class AutoLog:
         if self.run and now - self.last_gain > SITE_GAP:
             self.run = self.chain = None                     # ...for a run, 15 s is too long
         if map_name:
-            if self.block_map and map_name != self.block_map:
+            if self.block_map and map_name != self.block_map and not self.no_reset:
                 self.reset_clock()                           # changed maps: start over
                 return None
             self.block_map = map_name
+            if map_name not in self.block_maps:
+                self.block_maps.append(map_name)
+                self.block_reads.append(map_read or map_name)
         if self.block_party is not None and party != self.block_party:
             self.reset_clock()                               # party size changed: start over
             return None
@@ -3946,19 +3978,30 @@ class AutoLog:
         if potions is not None and self.pot0 is not None:
             cost = max(0, potions[1] - self.pot0[1])
             used = {n: c - self.pot0[0].get(n, 0) for n, c in potions[0].items() if c > self.pot0[0].get(n, 0)}
-        entry = self._add(self.block_map or "Unknown map", level, party, self.block_exp,
-                          now - self.start, meso_gain, meso_seconds, job, map_read or self.block_map, cost, used,
+        several = len(self.block_maps) > 1
+        entry = self._add(self._maps_label(self.block_maps) if several else self.block_map or "Unknown map", level, party,
+                          self.block_exp, now - self.start, meso_gain, meso_seconds, job,
+                          self._maps_label(self.block_reads) if several else map_read or self.block_map, cost, used,
                           self.block_estimated)
         self.start, self.block_exp, self.block_estimated = now, 0, False       # the next 5 minutes start now
+        self.block_maps, self.block_reads = [self.block_map] if self.block_map else [], [map_read or self.block_map] if self.block_map else []
         self.meso0 = mesos if mesos and now - mesos[1] < 10 else None
         self.pot0 = (dict(potions[0]), potions[1]) if potions is not None else None
         return entry
+
+    def _new_run(self, now):
+        run = {"start": now, "exp": 0, "map": None}
+        if self.no_reset:
+            run["no_reset"] = True
+        return run
 
     def _run_tick(self, now, map_name, level, party, job, map_read, hidden=False, window_at=None, estimated=False,
                   party_read=True):
         r = self.run
         if r is None:
             return
+        if self.no_reset:
+            r["no_reset"] = True                             # (kept to its end, even if switched off meanwhile)
         if r["map"] is None:                                 # what the run is about, once known
             if not map_name:
                 r["start"] = now                             # no map yet: the run can't start
@@ -3966,9 +4009,14 @@ class AutoLog:
                 return
             r.update(map=map_name, map_read=map_read or map_name, party=party, job=job,
                      level_start=level, wall=time.time() - (now - r["start"]),
-                     chain=min(self.chain if self.chain is not None else now, r["start"]))
+                     chain=min(self.chain if self.chain is not None else now, r["start"]),
+                     maps=[map_name], reads=[map_read or map_name])
+        elif map_name and map_name not in r.setdefault("maps", [r["map"]]):     # (No Reset only: else a new map started over)
+            r.setdefault("reads", [r["map_read"]])
+            r["maps"].append(map_name)
+            r["reads"].append(map_read or map_name)
         if job and r["job"] and job != r["job"]:
-            self.run = {"start": now, "exp": 0, "map": None}  # a different class: a new run
+            self.run = self._new_run(now)                    # a different class: a new run
             self.chain = now
             return
         r["job"] = r["job"] or job
@@ -3983,7 +4031,7 @@ class AutoLog:
             return
         if r["exp"] > 0:
             self._end_run(r, now)
-        self.run = {"start": now, "exp": 0, "map": None}     # straight on into the next run
+        self.run = self._new_run(now)                        # straight on into the next run
         self._prune()
         self._run_tick(now, map_name, level, party, job, map_read, hidden, window_at, estimated, party_read)
 
@@ -4012,7 +4060,7 @@ class AutoLog:
         size never read, is never shared: it keeps the mesos between its first and last look. A clean one
         is saved with EXP only and, given a look at its start, waits for one after its end (settle)."""
         seconds = now - r["start"]
-        if (r.get("window") or r.get("estimated") or r.get("party_unread") or r["level_start"] is None
+        if (r.get("window") or r.get("estimated") or r.get("party_unread") or r.get("no_reset") or r["level_start"] is None
                 or r["level"] is None):
             inside = [k for k in self.looks if r["start"] - 2 <= k[0] <= now]
             gain = gain_s = 0
@@ -4119,18 +4167,21 @@ class AutoLog:
 
     def runs_done(self, map_name, party, job, day=None):
         """How many runs were finished (sealed) on a day for a map, party size and class. A run estimated from a %
-        alone carries the seal "estimated" instead: it counts here, it is just never shared."""
+        alone carries the seal "estimated" instead, and one made with No Reset on the seal "no_reset": they count
+        here, they are just never shared."""
         day = day or date.today().isoformat()
         return sum(1 for r in self.runs if r.get("date") == day and r.get("map") == map_name
                    and r.get("party") == party and r.get("class") == job
-                   and (self.sealed(r, _SEALED_RUN) or (r.get("estimated") and r.get("seal") == "estimated")))
+                   and (self.sealed(r, _SEALED_RUN) or (r.get("estimated") and r.get("seal") == "estimated")
+                        or (r.get("no_reset") and r.get("seal") == "no_reset")))
 
     def unshared_runs(self):
         """Finished runs (exactly as the overlay saved them) not shared yet: only clean ones
         (no shop, storage or trade window seen, no EXP estimated from a % alone, a party size that was read), with
         a known level, not waiting for a look."""
         return [r for r in self.runs if not r.get("shared") and not r.get("window") and not r.get("pending")
-                and not r.get("estimated") and not r.get("party_unread") and r.get("level_start") is not None and r.get("level_end") is not None
+                and not r.get("estimated") and not r.get("party_unread") and not r.get("no_reset")
+                and r.get("level_start") is not None and r.get("level_end") is not None
                 and self.sealed(r, _SEALED_RUN)][:50]
 
     def mark_shared(self, started):
@@ -4185,7 +4236,9 @@ class AutoLog:
     def _add_run(self, r, seconds, mesos, meso_seconds, local=None):
         run = {"date": date.fromtimestamp(r["wall"]).isoformat(),
                "started": time.strftime("%Y-%m-%dT%H:%M", time.localtime(r["wall"])),
-               "map": r["map"], "map_read": r["map_read"], "class": r["job"],
+               "map": self._maps_label(r["maps"]) if len(r.get("maps", ())) > 1 else r["map"],
+               "map_read": self._maps_label(r["reads"]) if len(r.get("reads", ())) > 1 else r["map_read"],
+               "class": r["job"],
                "level_start": r["level_start"], "level_end": r["level"], "party": r["party"],
                "exp": r["exp"], "seconds": round(seconds, 1), "mesos": mesos,
                "mesos_seconds": round(meso_seconds, 1), "version": VERSION}
@@ -4198,6 +4251,10 @@ class AutoLog:
             local["party_unread"] = True
             if run["seal"] != "estimated":
                 run["seal"] = "party_unread"
+        if r.get("no_reset"):                                # (the same: No Reset was on, maybe across maps)
+            local["no_reset"] = True
+            if run["seal"] not in ("estimated", "party_unread"):
+                run["seal"] = "no_reset"
         run.update(local)                                    # (kept on this PC only: not sealed, never sent)
         self._change(lambda: self.runs.append(run))
         return run
@@ -4207,7 +4264,8 @@ class AutoLog:
         the maps in the log, and any names in `also`, e.g. the map you were just on)."""
         name = self.aliases.get(name, name)
         best, score = name, 0.0
-        for known in {e["map"] for e in self.entries} | set(self.aliases.values()) | {n for n in also if n}:
+        known_maps = {e["map"] for e in self.entries if MAPS_JOIN not in e["map"]}     # (not "Map A/Map B" lines)
+        for known in known_maps | set(self.aliases.values()) | {n for n in also if n}:
             if _numbers(known) == _numbers(name):
                 s = SequenceMatcher(None, known.lower(), name.lower()).ratio()
                 if s > score:
@@ -4471,6 +4529,8 @@ class App:
         self.started, self.cpu0 = time.monotonic(), time.process_time()
         self.recent, self.health = Recent(40, self.started), Health()      # for bug reports
         self.autolog = AutoLog(self.cfg["gap_seconds"])
+        self.session.no_reset = self.cfg["no_reset"]         # (remembered from last time)
+        self.autolog.set_no_reset(self.cfg["no_reset"])
         self.map_name = None
         self.potion_bar = potion_bar.NOT_SEEN    # what the potion bar showed at the last look: a potion_bar.PotionLook
         self._forget_report_screen()             # (a bug report's game picture left from last time)
@@ -4518,6 +4578,7 @@ class App:
         self._dpi = (PLATFORM.screen_dpi(pos[0] + 40, pos[1] + 15) if pos else None) or root.winfo_fpixels("1i")
         self._apply_ui_scale()
         self.hotkey_note = None
+        self.no_reset_note = None                       # (what switching No Reset means, shown for a few seconds)
         self.hotkeys = PLATFORM.create_hotkeys(lambda action: self.q.put(("hotkey", action)))
         self.hotkeys.set(self.cfg["hotkeys"], self.cfg["hotkeys_on"])
         self.compact = False
@@ -4576,7 +4637,8 @@ class App:
         self.theme = Theme(self.root, self._px_per_pt * 0.75, ASSETS / "fonts", self._own_fonts, PLATFORM.font)
         callbacks = dict(settings=self.open_settings, compact=lambda: self.set_compact(not self.compact),
                          log=self.toggle_log, start=self.toggle, reset=self.reset, logging=self._logging_clicked,
-                         best=self.open_best_maps, menu=self._open_menu, details=self._details_changed)
+                         best=self.open_best_maps, menu=self._open_menu, details=self._details_changed,
+                         no_reset=self.set_no_reset)
         self.view = self.main = MainView(self.root, self.theme, callbacks, details=bool(self.cfg.get("details")))
         self.view.grid(row=0, column=0, sticky="n")
         if self.compact:
@@ -4585,6 +4647,7 @@ class App:
         self.view.log_btn.set(kind="secondary" if self.log_open else "ghost")
         self.view.show(message=self.status.get())
         self._show_skip_log()
+        self._show_no_reset()
 
     def _style_frame(self):
         """The title bar in the overlay's colours. (Windows resets it when the frame changes, e.g. when the
@@ -5152,6 +5215,11 @@ class App:
                command=lambda: gap_by(5), bg=BG).pack(side="left")
         tk.Label(gap_step, text="s", bg=BG, fg=DIM, font=th.font("regular", 11)).pack(side="left", padx=(px(6), 0))
         tk.Label(body, text="Pausing also restarts the 5-minute log timer.", **dim).pack(anchor="w", pady=(px(5), 0))
+        no_reset = self._no_reset_var = tk.BooleanVar(value=bool(self.cfg["no_reset"]))
+        self._switch(body, "No Reset: keep the numbers across maps", no_reset).pack(anchor="w", pady=(px(10), 0))
+        tk.Label(body, text="For farming that moves between maps. Runs made with it on stay on this PC (they're "
+                            "not sent to the best-maps site).", wraplength=wrap, justify="left", **dim).pack(
+            anchor="w", pady=(px(4), 0))
 
         self._section(body, "Window")
         transparency = tk.IntVar(value=int(self.cfg["transparency"]))
@@ -5257,6 +5325,8 @@ class App:
             self.cfg["topmost"] = bool(topmost.get())
             self.cfg["check_updates"] = bool(updates.get())
             self.cfg["potions_on"] = bool(potions_on.get())
+            if bool(no_reset.get()) != self.cfg["no_reset"]:
+                self.set_no_reset(no_reset.get())
             if bool(sharing.get()) != bool(self.cfg.get("share_runs")):
                 self.cfg["share_runs"] = bool(sharing.get())
                 self.share_runs()
@@ -5271,7 +5341,7 @@ class App:
                 self.root.after(60, self._reopen_settings)        # (drawn again at the new size)
             save_config(self.cfg)
 
-        for var in (gap, transparency, topmost, updates, sharing, health_on, size, potions_on):
+        for var in (gap, transparency, topmost, updates, sharing, health_on, size, potions_on, no_reset):
             var.trace_add("write", apply)
         self._hotkey_settings(body)
         buttons = tk.Frame(body, bg=BG)
@@ -6080,6 +6150,8 @@ class App:
             return f"Level up! You're now Lv {self.level}." if self.level else "Level up!"
         if self.hotkey_note and time.monotonic() - self.hotkey_note[1] < 4:
             return self.hotkey_note[0]
+        if self.no_reset_note and time.monotonic() - self.no_reset_note[1] < 8:
+            return self.no_reset_note[0]
         if self.died_at and time.monotonic() - self.died_at < 30 and t.last_loss:
             return f"You died and lost {t.last_loss:.1f}% EXP. That isn't taken off your EXP/hr."
         if self.rejected >= 5:
@@ -6175,6 +6247,10 @@ class App:
             return "tracking", "Level up!"
         if sess.waiting:
             return "paused", "Paused"
+        if self.cfg["no_reset"]:                     # (instead of the level: it's in the big card anyway)
+            if t.running:
+                return "tracking", "Tracking \u00b7 No Reset"
+            return ("paused", "Paused \u00b7 No Reset") if t.elapsed() > 0 else ("ready", "Ready \u00b7 No Reset")
         if t.running:
             return "tracking", f"Tracking \u00b7 Lv {self.level}" if self.level else "Tracking"
         return ("paused", "Paused") if t.elapsed() > 0 else ("ready", "Ready")
@@ -6293,6 +6369,9 @@ class App:
         elif action == "skip":
             self.toggle_skip_log()
             done = "not logging this run" if self.skip_log else "logging this run again"
+        elif action == "no_reset":
+            self.toggle_no_reset()
+            done = "No Reset on" if self.cfg["no_reset"] else "No Reset off"
         else:
             self.set_compact(not self.compact)
             return
@@ -6335,6 +6414,31 @@ class App:
         self.cfg.pop("mesos_box", None)
         save_config(self.cfg)
         self.status.set("Reset. Looking for the map name, inventory and party list again...")
+
+    def toggle_no_reset(self):
+        self.set_no_reset(not self.cfg["no_reset"])
+
+    def set_no_reset(self, on):
+        """No Reset (main window switch, Settings, hotkey): map changes and AFK never start new numbers, and the
+        runs made meanwhile stay on this PC. Remembered after a restart."""
+        on = bool(on)
+        changed = on != self.cfg["no_reset"]
+        self.cfg["no_reset"] = self.session.no_reset = on
+        self.autolog.set_no_reset(on)
+        save_config(self.cfg)
+        self._show_no_reset()
+        if changed:
+            self.recent.add("No Reset on" if on else "No Reset off")
+            self.no_reset_note = (NO_RESET_ON if on else NO_RESET_OFF, time.monotonic())
+            self.status.set(self.no_reset_note[0])
+
+    def _show_no_reset(self):
+        on = bool(self.cfg["no_reset"])
+        self.view.no_reset.set(on)
+        self.view.show(no_reset=on)
+        var = getattr(self, "_no_reset_var", None)          # (Settings open: its switch follows)
+        if var is not None and self.settings_win and self.settings_win.winfo_exists() and bool(var.get()) != on:
+            var.set(on)
 
     def toggle_skip_log(self):
         self.skip_log = not self.skip_log
