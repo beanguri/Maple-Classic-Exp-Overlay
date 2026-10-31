@@ -1903,6 +1903,7 @@ class ScreenReader:
         self.next_outline = 0.0     # the earliest time to search for a see-through mesos box again
         self.party_area = None      # where the party list was last seen, on screen
         self._party_last = None     # reader v3's last party look (its scale, list box and held count carry over)
+        self._party_look = None     # ...and this scan's, or None when v3 didn't run in it
         self.next_scan = 0.0
         self.own_rect = None        # this app's window, which screenshots can't see through
         self.look_again_requested = False
@@ -1934,6 +1935,7 @@ class ScreenReader:
         self.shadows = {"exp": self.shadow}        # one shadow per part (shadow.PARTS): mesos and party join below
         for part in shadow.PARTS[1:]:
             self.shadows[part] = shadow.PartShadow(part, lambda exc, part=part: self._part_failed(f"reader v2 {part}", exc))
+        self.shadows["party"].main = True   # party size: v3 decides, this reader's count is the fallback (_party_answer)
         self._part_shadows = []             # (part, what happened, v2's ms) of the other parts' shadows in this look
         self.saved_v2 = {}                  # "WxH/gh" -> where reader v2 found the bar last time (from the config)
         self.v2_spot = None                 # ...and where it has found it in this game window (x0, y0, x1, y1)
@@ -2527,12 +2529,15 @@ class ScreenReader:
                     else:
                         t0 = time.perf_counter()
                         bars = find_party_bars(img, g, hsv)
-                        party = max(1, len(bars))
                         old_ms = (time.perf_counter() - t0) * 1000
                         # Reader v3 counts them by the bars' exact shape beside today's reader, on the same picture (no
-                        # extra grab). It keeps nothing of the picture, and never reads a name.
-                        self.shadow_part("party", party, old_ms, lambda: self._party_v3(img, hsv, wh),
+                        # extra grab), and decides. It keeps nothing of the picture, and never reads a name.
+                        self._party_look = None
+                        self.shadow_part("party", max(1, len(bars)), old_ms, lambda: self._party_v3(img, hsv, wh),
                                          searching=len(bars) < 2)
+                        party, note = self._party_answer(max(1, len(bars)), self._party_look)
+                        if note:
+                            notes.append(note)
                         if len(bars) >= 2:
                             x0, y0 = min(b[0] for b in bars), min(b[1] for b in bars)
                             x1, y1 = max(b[0] + b[2] for b in bars), max(b[1] + b[3] for b in bars)
@@ -2581,8 +2586,23 @@ class ScreenReader:
         for the next one (where the list was, and a party count held while the list is covered or just gone). A held
         count goes to the shadow as unclear: v3 didn't read it this look, so it is never counted as agreeing or not."""
         hint = ui_layout.mode_from_gh(self.gh, wh) if self.gh else None
-        look = self._party_last = party_v3.read_party_v3(img, hint, self._party_last, hsv)
+        look = self._party_last = self._party_look = party_v3.read_party_v3(img, hint, self._party_last, hsv)
         return (None, "unclear") if look.why == "held" else (look.count, look.why)
+
+    @staticmethod
+    def _party_answer(old, look):
+        """The party size of this scan and a note for the status (or None). Reader v3 decides (`look`, its PartyLook);
+        today's count `old` is the fallback when v3 didn't run (switched off, resting after an error) or found the list
+        unclear at a UI scale it can't read (party_v3.WEAK_SCALES: fullscreen 900-1024 tall at UI Default). A count held
+        while the list can't be read says so; an unclear list with nothing to hold gives no party size (never a guess)."""
+        if look is None:
+            return old, None
+        lo, hi = party_v3.WEAK_SCALES
+        if look.count is None and look.scale and lo <= look.scale < hi:
+            return old, None
+        if look.why == "held":
+            return look.count, f"Can't see the party list: party size kept at {look.count}."
+        return look.count, None
 
     def _read_potion_bar(self, capture, rect, notes):
         """What the potion bar shows as a potion_bar.PotionLook, or None when there is nothing to report (the
