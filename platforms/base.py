@@ -138,6 +138,10 @@ class Platform(ABC):
     def screen_dpi(self, x, y):
         """The DPI to size text for on the screen at (x, y), or None if unknown."""
 
+    def key_event(self, e):
+        """A tkinter key event -> (ctrl, alt, shift, Windows virtual key), for choosing a hotkey."""
+        return bool(e.state & 0x4), bool(e.state & 0x20000), bool(e.state & 0x1), e.keycode
+
     @abstractmethod
     def create_hotkeys(self, on_press):
         """A Hotkeys for this OS."""

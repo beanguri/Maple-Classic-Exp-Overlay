@@ -9,7 +9,9 @@ run.bat
 
 **From source on macOS:** `brew install tesseract`, then `python3 -m pip install -r requirements.txt` and `python3 maple_exp.py`. Allow your Terminal (or Python) in Screen Recording instead of the app.
 
-Everything that differs between Windows and macOS (finding the game window, screen scaling, hotkeys, the one-copy-at-a-time lock) is in `platforms/`: one `Platform` interface in `base.py`, one implementation per OS, and `create_platform()` picks the one for the OS it's on.
+**From source on Linux:** install Tk and Tesseract (with English data) from your distro, then `./run.sh`; it makes a `.venv` with `requirements.txt` the first time (this adds `python-xlib`). It runs Tk through X11 (XWayland on a Wayland desktop) so the overlay and the game, a Wine/Proton X11 window, share the same coordinates. The game is pictured from its own window, so nothing on top of it gets in the way, and on Wayland a picture of the whole screen would be black anyway. Run the tests with `.venv/bin/python tests/test_logic.py` and so on.
+
+Everything that differs between Windows, macOS and Linux (finding the game window, screen scaling, hotkeys, the one-copy-at-a-time lock) is in `platforms/`: one `Platform` interface in `base.py`, one implementation per OS, and `create_platform()` picks the one for the OS it's on.
 
 **Build the download** (puts `Maple-Classic-Exp-Overlay-v<version>.zip` in `release/`, and a copy to use right away in the project folder: `Maple Classic Exp Overlay.exe` with its `_internal` folder):
 
@@ -44,7 +46,7 @@ GitHub runs the logic tests on every push ([Tests workflow](../.github/workflows
 - The potion counts, your level (the orange **LV** badge) and the EXP number are read with the game's own font, drawn from `assets/fonts_v2/`; the party size by the exact shape of the party list's HP bars (`assets/party_shapes.json`). The older EXP reader and party count stay as a backup. Mesos are still read the older way; a newer mesos reader runs in a test mode that only compares and never changes a number you see; the daily health report counts how often the readers agree.
 - The party size is the number of HP bars in the party list.
 - Map names are read with Tesseract.
-- Settings, the log and `errors.log` are saved in `%APPDATA%\MapleEXP` (`~/Library/Application Support/MapleEXP` on macOS; from its old name, Maple EXP/hr, so updates keep them).
+- Settings, the log and `errors.log` are saved in `%APPDATA%\MapleEXP` (`~/Library/Application Support/MapleEXP` on macOS, `~/.local/share/MapleEXP` on Linux; from its old name, Maple EXP/hr, so updates keep them).
 
 ## Forking or changing this code
 

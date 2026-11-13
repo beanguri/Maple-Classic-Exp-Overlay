@@ -252,7 +252,7 @@ for name, bad in (("a string", "x"), ("a 2 MB string", "a" * 2_000_000), ("a lis
         cfg = m.load_config()
         check(f"{key} damaged as {name} is dropped, ui_scale kept", key not in cfg and cfg["ui_scale"] == 150)
 check(f"the right OS backend is made for {sys.platform} ({type(m.PLATFORM).__name__})",
-      type(m.PLATFORM).__name__ == {"win32": "WindowsPlatform", "darwin": "MacPlatform"}.get(sys.platform))
+      type(m.PLATFORM).__name__ == {"win32": "WindowsPlatform", "darwin": "MacPlatform", "linux": "LinuxPlatform"}.get(sys.platform))
 try:
     m.create_platform("plan9")
     unsupported = False
@@ -291,6 +291,17 @@ if sys.platform == "darwin":
           and not macos.is_game(W(7, 14, "MapleStory Classic World", "", 101, (0, 0, 200, 100), True), 99))
     check("macOS windows can be listed", isinstance(macos.window_list(), list))
     check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
+if sys.platform.startswith("linux"):
+    from platforms import linux
+    check("on Linux the game is found under Wine and Proton, not browsers or the overlay itself",
+          linux.is_game(("maplestory.exe", "Maplestory.exe"), "MapleStory", 10, 99)
+          and linux.is_game(("steam_app_216150", "steam_app_216150"), "MapleStory", 11, 99)
+          and not linux.is_game(("steam_app_216150", "steam_app_216150"), "MapleStory", 99, 99)
+          and not linux.is_game(("Navigator", "firefox"), "MapleStory Classic guide", 12, 99)
+          and not linux.is_game(("konsole", "konsole"), "maplestory", 13, 99))
+    check("Linux hotkeys map to X keys and back",
+          all(linux._keysym_vk(linux._vk_keysym(vk)) == vk for vk in (0x31, 0x41, 0x5A, 0x70, 0x7B)))
+    check("a Linux window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
 check("release notes are shown as plain text, keeping names like exp_log.txt",
       m._plain_text("**New**\n- **Time** in `exp_log.txt`, see [README](https://x)") == "New\n• Time in exp_log.txt, see README")
 # B06-1: hostile release notes / version names (a broken or tampered GitHub answer) can't freeze or stretch the overlay

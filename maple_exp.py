@@ -5635,7 +5635,7 @@ class App:
             elif e.keysym in ("BackSpace", "Delete"):
                 done(action, "")
             else:
-                key = hotkey_text(bool(e.state & 0x4), bool(e.state & 0x20000), bool(e.state & 0x1), e.keycode)
+                key = hotkey_text(*PLATFORM.key_event(e))
                 if not key:
                     hint.set("Use Ctrl, Alt or Shift with a number or letter, or an F key.")
                     return "break"

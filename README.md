@@ -41,6 +41,15 @@ It works with the game's own Mac version, or the Windows one through CrossOver, 
 
 Hotkeys aren't available on macOS yet.
 
+### On Linux
+
+There's no download for Linux: it runs from source, with the game under Wine, Lutris or Steam (Proton). It works on X11, and on Wayland through XWayland (the game already uses it under Wine).
+
+1. Install Python 3.10 or newer, Tk and Tesseract with English data (Arch: `pacman -S python tk tesseract tesseract-data-eng`; Debian/Ubuntu: `apt install python3-venv python3-tk tesseract-ocr`).
+2. Download this project (**Code > Download ZIP**, or `git clone`), then run `./run.sh` in its folder. The first start sets up its own Python packages in `.venv`.
+
+Hotkeys work while the game or the overlay is the window in front.
+
 ## How to use it
 
 1. **Start MapleStory**, then the overlay. It finds the game window by itself.
