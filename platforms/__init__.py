@@ -16,4 +16,7 @@ def create_platform(name=sys.platform):
     if name == "darwin":
         from .macos import MacPlatform
         return MacPlatform()
-    raise RuntimeError(f"Maple Classic Exp Overlay runs on Windows and macOS, not {name}.")
+    if name.startswith("linux"):
+        from .linux import LinuxPlatform
+        return LinuxPlatform()
+    raise RuntimeError(f"Maple Classic Exp Overlay runs on Windows, macOS and Linux, not {name}.")
