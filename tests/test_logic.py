@@ -290,6 +290,7 @@ if sys.platform == "darwin":
           macos.is_game(W(6, 14, "MapleStory Classic World", "", 26, (0, 38, 1366, 796), True), 99)
           and not macos.is_game(W(7, 14, "MapleStory Classic World", "", 101, (0, 0, 200, 100), True), 99))
     check("macOS windows can be listed", isinstance(macos.window_list(), list))
+    check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
 if sys.platform.startswith("linux"):
     from platforms import linux
     check("on Linux the game is found under Wine and Proton, not browsers or the overlay itself",
@@ -300,7 +301,7 @@ if sys.platform.startswith("linux"):
           and not linux.is_game(("konsole", "konsole"), "maplestory", 13, 99))
     check("Linux hotkeys map to X keys and back",
           all(linux._keysym_vk(linux._vk_keysym(vk)) == vk for vk in (0x31, 0x41, 0x5A, 0x70, 0x7B)))
-    check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
+    check("a Linux window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
 check("release notes are shown as plain text, keeping names like exp_log.txt",
       m._plain_text("**New**\n- **Time** in `exp_log.txt`, see [README](https://x)") == "New\n• Time in exp_log.txt, see README")
 # B06-1: hostile release notes / version names (a broken or tampered GitHub answer) can't freeze or stretch the overlay

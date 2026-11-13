@@ -341,7 +341,7 @@ class LinuxPlatform(Platform):
         # Plasma and GNOME publish the scaling for X11 programs as Xft.dpi.
         try:
             with self.x.lock:
-                rm =self.x.prop(self.x.root, self.x.d.intern_atom("RESOURCE_MANAGER"))
+                rm = self.x.prop(self.x.root, self.x.d.intern_atom("RESOURCE_MANAGER"))
             for line in _text(rm).splitlines():
                 if line.startswith("Xft.dpi:"):
                     return int(float(line.split(":", 1)[1]))
