@@ -676,10 +676,11 @@ t.observe(9999, 0, 0, True)
 check("a one-off reading isn't counted yet", t.value == 9850)
 for v in (820, 820, 820, 9880, 9880, 9880):
     t.observe(v, 0, 0, True)
-check("a lost digit and its correction don't count as mesos gained", t.gained == 30 and t.value == 9880)
+check(f"a lost digit and its correction don't count as mesos gained, what was picked up meanwhile does ({t.gained})",
+      t.gained == 60 and t.value == 9880)
 for v in (25000, 25000, 25000):
     t.observe(v, 0, 0, True)
-check("selling loot (a big jump) doesn't count as farming", t.gained == 30)
+check("selling loot (a big jump) doesn't count as farming", t.gained == 60)
 for v in (250000,) * 7:
     t.observe(v, 0, 0, True)
 check("an extra digit (10x) needs 8 readings in a row, not 3", t.value == 25000)
@@ -1028,6 +1029,88 @@ for _ in range(3):
 for _ in range(3):
     t.observe(100500, 10, 0, False)
 check("mesos seen before Start aren't 'left out'", t.left_out == [0, 0] and t.value == 100500)
+
+# ---- net mesos audit (2026-11-14): a misread and its correction always cancel out
+# the leading digit is covered for a few looks (a new start from the short number), then the inventory
+# is closed and opened again 3 minutes later: only what was really picked up is earned
+t = m.MesoTracker()
+looks(t, 1_234_567, 0)
+looks(t, 1_236_000, 30)                                   # +1,433 picked up
+looks(t, 236_000, 40)                                     # the 1 covered: read short 3 times
+looks(t, 1_240_000, 220)                                  # 3 minutes later, the real count
+check(f"a hidden leading digit, then a long wait: only what was picked up is earned ({t.gained})",
+      t.gained == 5_433)
+t = m.MesoTracker()
+looks(t, 1_234_567, 0)
+looks(t, 7_234_900, 200)                                  # after a long wait, the 1 read as a 7 (believed: a big rise)
+looks(t, 1_235_000, 210)                                  # read right again
+check(f"a misread rise after a long wait is taken back by its correction ({t.gained})", t.gained == 433)
+
+# a misread confirmed while farming (1 read as 7: +6,000, small enough for 2 readings), then the map is
+# left and the right count is read in town: the misread is taken back, not 6,000 'spent'
+t = m.MesoTracker()
+looks(t, 101_000, 0)
+looks(t, 101_500, 60, 2)                                  # +500 picked up
+looks(t, 107_500, 70, 2)                                  # the misread
+t.pause(stale=True)                                       # off to town
+paused_reads(t, 101_500, 80, 2)
+check(f"a misread corrected while paused is taken back, not left out (gained {t.gained}, left out {t.left_out})",
+      t.gained == 500 and t.left_out == [0, 0])
+
+# the look that banks what was earned before a pause is a misread, then the right count is read
+for misread, kind in ((147_000, "low"), (157_000, "high")):
+    t = m.MesoTracker()
+    looks(t, 150_000, 0)
+    t.pause(stale=True, bank_inventory=True)
+    paused_reads(t, misread, 30, 2)
+    paused_reads(t, 152_000, 35, 2)                       # really 2,000 earned before the pause
+    check(f"a banking look misread {kind}, then read right: 2,000 earned (gained {t.gained})", t.gained == 2000)
+
+# back from town, the inventory first opened 20 minutes after tracking carried on: those 20 minutes'
+# mesos can't be known, so they don't count against the rate either (a steady 50,000/hr all along)
+t = m.MesoTracker()
+for run in range(0, 1801, 60):                            # 30 minutes with the inventory open
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+t.pause(stale=True)
+for _ in range(3):
+    t.observe(1_005_000, 2000, 1800, False)               # in town (run time stays at 1,800 while paused)
+for run in range(3000, 3601, 60):                         # resumed at 1,800; the inventory open from 3,000 on
+    for _ in range(3):
+        t.observe(1_005_000 + (run - 3000) * 50_000 // 3600, run + 200, run, True)
+rate, five = t.per_hour(3600), t.per_5min(3600)
+check(f"mesos/hr after a trip leaves out the time before the first look (got {rate:,.0f}/hr, real 50,000/hr)",
+      rate is not None and abs(rate - 50_000) < 500)
+check(f"...and the last 5 minutes are the 5 minutes looked at (got {five:,.0f}, real 4,167)",
+      five is not None and abs(five - 50_000 / 12) < 50)
+
+
+# a misread confirmed near the end of a 5-minute stretch and corrected early in the next one, which goes
+# on another log line (a party member left): neither line gets the misread, and neither goes negative.
+# Really 1,210,000 + 100 every 10 s (36,000/hr); from 280 s to 330 s the 1 in 1,21x,xxx is read as a 7.
+def misread_split(misread):
+    log, path = new_log()
+    meso = m.MesoTracker()
+    real = lambda t: 1_210_000 + int(t // 10) * 100
+    t = 0.0
+    while t < 920:
+        if int(t * 2) % 6 == 0:
+            log.gain(t, 100)                                  # EXP every 3 s
+        meso.observe(real(t) + (misread if 280 <= t < 330 else 0), t, t, True)
+        log.tick(t, "Monkey Forest II", 44, 4 if t <= 300 else 3, job="Crossbowman", **meso.for_log())
+        t += 0.5
+    saved = json.loads(path.read_text())["entries"]
+    return ({e["party"]: e["mesos"] / e["mesos_seconds"] * 3600 for e in saved}, meso.gained,
+            all(log.sealed(e) and not log.edited(e) for e in log.entries))
+
+
+for misread in (60_000, -6_000):
+    rates, gained, sealed = misread_split(misread)
+    check(f"a misread of {misread:+,} split across two log lines leaves both at about 36,000 mesos/hr "
+          f"({', '.join(f'{p} ppl {r:,.0f}' for p, r in sorted(rates.items()))}; total {gained:,})",
+          len(rates) == 2 and all(abs(r - 36_000) < 3_000 for r in rates.values()))
+    check("...as saved, and the line put right is still the tracker's own (sealed, not 'edited')", sealed)
 
 # ---- EXP outliers
 def exp_tracker(e=47850, p=50.0):
@@ -2339,7 +2422,7 @@ looks(t, 90000, 10)
 looks(t, 100000, 20)
 check("buying and selling back at a shop is no snap back", t.misreads == [])
 check("the tracker hands the log its looks, windows, misreads and resets",
-      set(t.for_log()) == {"mesos", "window_at", "misreads", "meso_epoch"} and t.for_log()["window_at"] == 5)
+      set(t.for_log()) == {"mesos", "window_at", "misreads", "meso_epoch", "corrections"} and t.for_log()["window_at"] == 5)
 log, _ = new_log()
 farm(log, 0, 935, mesos_at=steady(), misreads=[(899.5, 903)])
 r = log.runs[0] if log.runs else {}
