@@ -15,7 +15,11 @@ from pathlib import Path
 
 import numpy as np
 
+from ui_layout import GAME_SIZES
+
 from .base import Hotkeys, Platform
+
+TITLE_BAR = 28                                   # a standard macOS window's title bar, in points
 
 _cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
 _cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
@@ -105,6 +109,8 @@ def is_game(w, own_pid):
     """Could this window be MapleStory's?"""
     if w.layer < 0 or w.pid == own_pid or not w.rect or w.owner.lower() in _NOT_GAME:
         return False
+    if "launcher" in w.owner.lower():                # Nexon's "MapleStory Launcher" stays open beside the game
+        return False
     # Nexon's own Mac app ("MapleStory Classic World") puts the game above the menu bar's layer.
     if "maplestory" in w.owner.lower().replace(" ", ""):
         return w.layer < _POPUP
@@ -188,12 +194,14 @@ class MacPlatform(Platform):
         return bool(window_list(_ONLY_THIS, number))
 
     def client_rect(self, number):
-        # Includes the title bar, if the window has one: the overlay looks for the EXP bar,
-        # minimap and so on inside the window, so a little more around them does no harm.
+        # macOS lists the window with its title bar. The UI's scale comes from the game area's height, so a
+        # window that is one of the game's sizes plus a title bar is cut down to the game area below the bar.
         w = next(iter(window_list(_ONLY_THIS, number)), None)
         if not w or not w.onscreen or not w.rect:
             return None
         x, y, width, height = (round(v) for v in w.rect)
+        if (width, height) not in GAME_SIZES and (width, height - TITLE_BAR) in GAME_SIZES:
+            y, height = y + TITLE_BAR, height - TITLE_BAR
         return (x, y, width, height) if width >= 100 and height >= 100 else None
 
     captures_window_alone = True

@@ -291,6 +291,36 @@ if sys.platform == "darwin":
           and not macos.is_game(W(7, 14, "MapleStory Classic World", "", 101, (0, 0, 200, 100), True), 99))
     check("macOS windows can be listed", isinstance(macos.window_list(), list))
     check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
+    # macOS reports the window with its 28 pt title bar; the UI scale comes from the game area's height, so
+    # the bar must not be counted (live 2026-11-14: a 1280x720 game listed as 1280x748 at (4, 35)).
+    _real_list = macos.window_list
+    try:
+        macos.window_list = lambda *a: [W(8, 15, "MapleStory Classic World", "", 26, (4, 35, 1280, 748), True)]
+        windowed = m.PLATFORM.client_rect(8)
+        macos.window_list = lambda *a: [W(9, 15, "MapleStory Classic World", "", 26, (0, 0, 1920, 1080), True)]
+        fullscreen = m.PLATFORM.client_rect(9)
+    finally:
+        macos.window_list = _real_list
+    check(f"on macOS the window's title bar isn't counted as game area ({windowed})", windowed == (4, 63, 1280, 720))
+    check(f"on macOS a fullscreen game (no title bar) keeps its whole window ({fullscreen})",
+          fullscreen == (0, 0, 1920, 1080))
+    # Nexon's launcher (its own app, "MapleStory Launcher") stays open next to the game: the overlay started
+    # with only the launcher up must move to the game once it opens (both as seen live on 2026-11-14).
+    launcher = W(2560, 18857, "MapleStory Launcher", "", 0, (463, 285, 802, 526), True)
+    game = W(2578, 19119, "MapleStory Classic World", "", 0, (4, 35, 1280, 748), True)
+    showing = [launcher]
+    real_platform = m.PLATFORM
+    macos.window_list = lambda option=0, number=0: [w for w in showing if not number or w.number == number]
+    m.PLATFORM = macos.MacPlatform()
+    try:
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        before = reader._game_rect()
+        showing = [game, launcher]                           # Play pressed: the launcher stays open
+        after = [reader._game_rect() for _ in range(2)]
+    finally:
+        macos.window_list, m.PLATFORM = _real_list, real_platform
+    check(f"on macOS the launcher isn't taken for the game, and the game is found once it opens ({before}, {after})",
+          before is None and after == [(4, 63, 1280, 720)] * 2)
 check("release notes are shown as plain text, keeping names like exp_log.txt",
       m._plain_text("**New**\n- **Time** in `exp_log.txt`, see [README](https://x)") == "New\n• Time in exp_log.txt, see README")
 # B06-1: hostile release notes / version names (a broken or tampered GitHub answer) can't freeze or stretch the overlay
@@ -1180,6 +1210,32 @@ for e in (50721, 50721, 47850, 47950):                   # 3% too high twice, th
     read(tr, e)
 check(f"a misread a bit too high and the real number after it cancel out (gained {tr.gained:.0f})",
       tr.gained == 100 and tr.deaths == 0)
+# At low levels a minute of hunting earns as much as dying costs, so a death lands on a number seen a minute
+# ago. Lv 15 needs 7,050: from 30% (2,115), a 45 EXP kill every 3 s (two readings each) for 60 s = 900, then
+# dying costs 10% (705). (Audit 2026-11-14: the loss was taken off, gained 195, deaths 0.)
+def read15(tr, e):
+    return tr.observe([(e, int(e / 7050 * 10000) / 100)], True)
+
+tr = m.ExpTracker(); tr.start()
+for _ in range(3):
+    read15(tr, 2115)
+for k in range(1, 21):
+    read15(tr, 2115 + 45 * k); read15(tr, 2115 + 45 * k)
+for _ in range(2):
+    note = read15(tr, 3015 - 705)[1]
+check(f"dying at Lv 15 after a minute of hunting isn't taken off the EXP gained (gained {tr.gained:.0f}, deaths {tr.deaths})",
+      tr.gained == 900 and tr.deaths == 1 and note == "died")
+# Earning the loss back kill by kill isn't the misread "back in one go": at 30% (2,115) dies to 1,410, then a 45
+# EXP kill every 3 s for 51 s = 765. (Audit 2026-11-14: the death was taken back, deaths 0, gained 720.)
+tr = m.ExpTracker(); tr.start()
+for _ in range(3):
+    read15(tr, 2115)
+for _ in range(2):
+    read15(tr, 1410)
+for k in range(1, 18):
+    read15(tr, 1410 + 45 * k); read15(tr, 1410 + 45 * k)
+check(f"after dying at Lv 15, earning the loss back kill by kill keeps the death and every kill (gained {tr.gained:.0f}, "
+      f"deaths {tr.deaths})", tr.gained == 765 and tr.deaths == 1)
 log, _ = new_log()
 log.gain(0, 100)
 log.gain(1, -2000)                                       # more taken back than gained
@@ -1484,6 +1540,21 @@ check("leaving the map pauses by itself", s.waiting == "map" and not s.exp.runni
 s.map_seen("Rocky Road II")
 gains(s, 6.5)
 check("back on the same map, it carries on adding up", s.exp.running and s.exp.gained == gained + 100)
+# The kill that ends an idle pause is a level-up: Lv 46 needs 510,420; farming up to 510,000, 20 s idle, then
+# a 600 EXP kill makes Lv 47 (555,680) with 180. Its EXP isn't counted (like any gain that restarts), the level is.
+s = m.Session(15)
+s.map_seen("Rocky Road II")
+s.start(clock[0])
+for e in (509000, 509000, 509000, 509500, 510000):
+    clock[0] += 1.5
+    s.observe([(e, int(e / 510420 * 10000) / 100)], True, clock[0]); s.tick(clock[0])
+idle(s, 20)
+paused = s.waiting
+for _ in range(3):
+    clock[0] += 1.5
+    s.observe([(180, int(180 / 555680 * 10000) / 100)], True, clock[0]); s.tick(clock[0])
+check(f"a level-up that ends an idle pause is counted (paused: {paused}, levels {s.exp.levels}, running {s.exp.running})",
+      paused == "idle" and s.exp.running and s.exp.levels == 1)
 
 # ---- No Reset (0.9.16, N02): farming across maps keeps one set of numbers
 A, B = "Rocky Road II", "The Swamp of Despair I"
@@ -1762,6 +1833,25 @@ w = Watch()
 w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 50)))
 w.look(plook(s0=("Red Potion", 99), s1=("Red Potion", 48)))
 check(f"two look-alike stacks in one layout are each their own stack ({w.t.used})", w.t.used == {"Red Potion": 3})
+
+# Misread counts that come back aren't use (audit 2026-11-14). The game's digits blip: 320 read as 328 for one
+# look, then 320 again: nothing was eaten (before, 8 were charged each time: 1,280 Meat over 80 min of blips).
+w = Watch()
+for n in (320, 328, 320, 320):
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread higher for one look, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (320, 328, 328, 320):                         # 320 read as 328 for two looks in a row
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread higher for two looks, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (321, 311, 311, 321):                         # 321 read as 311 for two looks in a row
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread lower for two looks, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (321, 311, 320, 320):                         # 321 read as 311, and one Meat eaten meanwhile
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread lower, then one below where it was, is one used ({w.t.used})", w.t.used.get("Meat") == 1)
 
 w = Watch()
 w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))

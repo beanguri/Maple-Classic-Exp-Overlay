@@ -293,7 +293,10 @@ def name_match(old, new):
         if any(not any(abs(i - j) <= 2 for j in missing) for i in bad) or (bad and not missing):
             continue                          # (something that shows doesn't match)
         if good < 3:
-            few = few or (bool(missing) and good + len(bad) < 3)    # (almost nothing shows: can't tell)
+            # (almost nothing shows: can't tell, when the only parts that don't match are half under the cover,
+            # right next to a hidden one. A whole part that doesn't match says it's another name.)
+            whole = [i for i in bad if all(abs(i - j) > 1 for j in missing)]
+            few = few or (bool(missing) and not whole)
             continue
         found = "alike" if missing else "same"
         if found == "same" or not best:

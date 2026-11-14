@@ -2951,7 +2951,7 @@ class ExpTracker:
         self._pending_lvl = None              # level-up waiting for confirmation
         self._level_start = None              # (exp, pct) right after a level-up, unverified
         self._prev_req = None                 # previous level's req, bounds the new one
-        self._before_death = None             # (reads, EXP) just before the last death
+        self._before_death = None             # (reads, EXP just before, EXP it went down to) of the last death
         self.deaths = 0
         self.last_loss = None                 # % of the level's EXP the last death cost
         self.gained = 0
@@ -3198,14 +3198,15 @@ class ExpTracker:
             if n < 2:
                 return False, "EXP went down, waiting to confirm"
             self._pending = None
-            self._before_death = (self._reads, self.exp)
+            self._before_death = (self._reads, self.exp, e)
             self.last_loss = -delta / self.req * 100
             self.deaths += 1
             self.exp, self.pct = e, p
             self._recent.append((self._reads, e))
             return True, "died"
         if self._before_death and self._reads - self._before_death[0] <= 40 and delta > 0 \
-                and e >= self._before_death[1] - 0.005 * self.req:
+                and e >= self._before_death[1] - 0.005 * self.req \
+                and abs(self.exp - self._before_death[2]) <= 0.005 * self.req:
             # Right back to where it was before "dying", in one go: those low readings were a
             # misread, not a death (EXP lost on dying comes back only slowly, from monsters).
             self._before_death, self.deaths = None, max(0, self.deaths - 1)
@@ -3236,9 +3237,20 @@ class ExpTracker:
         return True, ""
 
     def _was_near(self, e):
-        """Was EXP about e a moment ago? Then going down to it is the right number coming
-        back after a misread that was a bit too high (and counts, to cancel that out)."""
-        return any(self._reads - r <= 40 and abs(e - x) <= 0.005 * self.req for r, x in self._recent)
+        """Was EXP about e a moment ago, and since then only a misread or two? Then going down to it is the
+        right number coming back after a misread that was a bit too high (and counts, to cancel that out).
+        Climbing through many numbers since then is hunting: at low levels a minute of it earns what dying
+        costs, so a death can land on a number seen a minute ago."""
+        near = 0.005 * self.req
+        since = []                                   # the numbers shown since EXP was last about e
+        for r, x in reversed(self._recent):
+            if self._reads - r > 40:
+                return False
+            if abs(e - x) <= near:
+                return len(since) <= 2
+            if not any(abs(x - y) <= near for y in since):
+                since.append(x)
+        return False
 
     def _undoes_jump(self, e):
         """Was EXP around e a moment ago? Then a big drop to it is the right number coming
@@ -3716,6 +3728,8 @@ class Session:
             self.waiting = None
             self.last_gain = now
             t.start()
+            if result[1] == "LEVEL UP!":
+                t.levels += 1               # (its EXP isn't counted, like any gain that restarts; the level is)
         return result
 
     def look_at_bar(self, look, now, window=None):
