@@ -3501,10 +3501,16 @@ class MesoTracker:
         banking = (not running and self.stale and self.value is not None
                    and ((self.window and self.window_reads == 0 and self.bank_window)
                         or (not self.window and self.bank_inventory)))
-        if banking and moved and value < self.value and not self.window:
+        takes_back = moved and not running and self._takes_back(value, now)
+        if banking and moved and value < self.value and not self.window and not takes_back:
             return                                # grinding never lowers mesos: a misread, the next look banks
         if banking:                               # what was earned before the trip, seen at last
             self.bank_window = self.bank_inventory = False
+        if takes_back:
+            self._earn(value - self.value, elapsed)                         # a misread put right, not money spent
+            self._corrected(self._last_earn[2], now, self._last_earn[1] - self._last_earn[0])
+            self._last_earn = None
+        elif banking:
             if moved and unread_spend:
                 self._leave_out(value - self.value, now)
             elif moved:
@@ -3513,12 +3519,7 @@ class MesoTracker:
         elif moved and self.window and self.window_reads:
             self._leave_out(value - self.value, now)                        # exact change at a window
         elif moved and not running and not self.idle_pause and self.value is not None and self.start is not None:
-            if self._takes_back(value, now):
-                self._earn(value - self.value, elapsed)                     # a misread put right, not money spent
-                self._corrected(self._last_earn[2], now, self._last_earn[1] - self._last_earn[0])
-                self._last_earn = None
-            else:
-                self._leave_out(value - self.value, now)                    # anything while paused
+            self._leave_out(value - self.value, now)                        # anything while paused
         elif resumed and (self.stale or first):
             if self.stale and last_read is not None and elapsed > last_read:
                 self.unseen.append((last_read, elapsed))    # what was earned meanwhile is unknown

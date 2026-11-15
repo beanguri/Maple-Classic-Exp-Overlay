@@ -1152,6 +1152,19 @@ paused_reads(t, 199_050, 22)
 check(f"a fare paid right after leaving the map is left out, the pickup before it stays earned "
       f"(gained {t.gained}, left out {t.left_out})", t.gained == 50 and t.left_out == [0, 1000])
 
+# +200 picked up, then a misread 500 too high just before Pause on the map; the inventory, still open, reads
+# the right count: the misread is taken back, whether paused on the map or by leaving it
+for on_map in (True, False):
+    t = m.MesoTracker()
+    looks(t, 1_000_000, 0)
+    looks(t, 1_000_200, 2)
+    looks(t, 1_000_700, 4)
+    t.pause(stale=True, bank_inventory=on_map)
+    paused_reads(t, 1_000_200, 6, 6)
+    looks(t, 1_000_200, 10)
+    looks(t, 1_000_400, 12)
+    check(f"a misread just before {'Pause on the map' if on_map else 'leaving the map'} is taken back: 400 earned "
+          f"(gained {t.gained})", t.gained == 400)
 # ---- EXP outliers
 def exp_tracker(e=47850, p=50.0):
     tr = m.ExpTracker(); tr.start()
