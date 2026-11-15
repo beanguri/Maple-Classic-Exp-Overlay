@@ -167,6 +167,16 @@ log.rename(log.entries[0], "Renamed Map")
 check("renaming a map in the app keeps the line sealed (the name as read stays on record)",
       log.sealed(log.entries[0]) and log.entries[0]["map_read"] == "Rocky Road II")
 
+log, _ = new_log()
+log._add("Ant Tunel I", 27, 1, 1000, 300, 3000, 300)                        # potions not counted yet
+log._add("Ant Tunel I", 27, 1, 1000, 300, 3000, 300, potion_cost=1500, potions={"Red Potion": 30})
+log._add("Ant Tunnel I", 27, 1, 1000, 300, 3000, 300, potion_cost=1500, potions={"Red Potion": 30}, estimated=True)
+log.rename([x for x in log.entries if x["map"] == "Ant Tunel I"][0], "Ant Tunnel I")
+e = log.entries[0]
+check(f"merging two lines by renaming keeps net mesos/hr over the time potions were counted ({m.net_text(e)})",
+      len(log.entries) == 1 and m.net_text(e) == "18,000")
+check("...and a merged line with an estimated part is still marked estimated", e.get("estimated") is True)
+
 log, path = new_log()
 farm(log, 0, 950, job="Bandit")
 runs = log.runs
