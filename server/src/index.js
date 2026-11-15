@@ -367,7 +367,7 @@ async function postRuns(request, env, now, url) {
       continue;
     }
     if (!mapsToday.has(run.map) && mapsToday.size >= MAX_MAPS_PER_INSTALL_DAY) {
-      results[i] = { started, ok: false, why: "too many different maps in a day" };
+      results[i] = { started, ok: false, why: "too many different maps in a day", retry: true };
       continue;
     }
     if (counts.day_runs + saved >= limit) {

@@ -430,6 +430,9 @@ results = [call("/api/runs", {"install": dozen, "runs": [run(f"{day(16)}T{8 + i 
            ["results"][0] for i, n in enumerate(names)]
 check(f"one install can't farm more than 12 different maps in a day ({sum(r['ok'] for r in results)} of 14)",
       sum(r["ok"] for r in results) == 12 and results[-1].get("why") == "too many different maps in a day")
+check("...and says to try again, so the overlay keeps those runs to send another day", results[-1].get("retry") is True)
+late = call("/api/runs", {"install": dozen, "runs": [run(f"{day(16)}T13:00", 50000, map_name=names[-1])]}, later=24)["results"][0]
+check(f"...where a run played that day goes through, counted by the day it arrives ({late})", late.get("ok") is True)
 
 # the server's clock can't be set from outside: the live site ignores the test header
 check("the test header is only for a local server (the check is in the code)",
