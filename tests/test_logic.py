@@ -289,7 +289,7 @@ if sys.platform == "darwin":
     check("Nexon's own Mac app is found above the menu bar's layer, but not as high as pop-up menus",
           macos.is_game(W(6, 14, "MapleStory Classic World", "", 26, (0, 38, 1366, 796), True), 99)
           and not macos.is_game(W(7, 14, "MapleStory Classic World", "", 101, (0, 0, 200, 100), True), 99))
-    check("macOS windows can be listed", isinstance(macos.window_list(), list))
+    check("macOS windows can be listed (at least the menu bar and Dock are always there)", len(macos.window_list()) > 0)
     check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
     # macOS reports the window with its 28 pt title bar; the UI scale comes from the game area's height, so
     # the bar must not be counted (live 2026-11-14: a 1280x720 game listed as 1280x748 at (4, 35)).
