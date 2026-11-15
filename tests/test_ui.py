@@ -987,6 +987,29 @@ app.reader.map_seen_at = m.time.monotonic()
 app.session.on, app.session.waiting = False, None
 m.tesseract_ok = real_ok
 
+# ---- a potion price changed while tracking counts from then on
+folder = Path(tempfile.mkdtemp())
+real_log, real_running, real_hidden = app.autolog, app.tracker.running, app.map_hidden
+app.autolog, app.tracker.running, app.map_hidden = m.AutoLog(15, folder / "log.json", folder / "log.txt"), True, False
+app.cfg["potions_on"], app.cfg["potion_prices"] = True, {"Red Potion": 50}
+app.session.potions.reset()
+app.meso.reset()
+at = 0.0
+while at < 610:                                              # 6 a minute; a new price of 100 at 5:10
+    if at % 3 == 0:
+        app.autolog.gain(at, 100)
+    if at == 310:
+        app.cfg["potion_prices"]["Red Potion"] = 100
+    app.session.potions.used = {"Red Potion": int(at / 10)}
+    app._log_tick(at)
+    at += 0.5
+line = app.autolog.entries[0] if app.autolog.entries else {}
+check(f"a new price counts from then on: the next 5 minutes' 30 potions cost 3,000 on top of 1,500 ({line.get('potion_cost')})",
+      line.get("potions") == {"Red Potion": 60} and line.get("potion_cost") == 4500)
+app.autolog, app.tracker.running, app.map_hidden = real_log, real_running, real_hidden
+app.cfg["potion_prices"] = {}
+app.session.potions.reset()
+
 # ---- paused while a finished run waits for an inventory look: the status asks for one
 now = m.time.monotonic()
 app.meso.reset()                                            # (no recent look left over from the tests above)
