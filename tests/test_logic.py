@@ -174,7 +174,7 @@ log._add("Ant Tunnel I", 27, 1, 1000, 300, 3000, 300, potion_cost=1500, potions=
 log.rename([x for x in log.entries if x["map"] == "Ant Tunel I"][0], "Ant Tunnel I")
 e = log.entries[0]
 check(f"merging two lines by renaming keeps net mesos/hr over the time potions were counted ({m.net_text(e)})",
-      len(log.entries) == 1 and m.net_text(e) == "18,000")
+      len(log.entries) == 1 and m.net_text(e) == "18,000" and log.sealed(e))
 check("...and a merged line with an estimated part is still marked estimated", e.get("estimated") is True)
 
 log, path = new_log()

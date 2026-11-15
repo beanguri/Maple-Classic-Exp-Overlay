@@ -4411,14 +4411,12 @@ class AutoLog:
                 for r in self.runs:
                     if r.get("map") == old:
                         r["map"] = new_name                  # (runs are sealed by map_read)
-            merged = {}
+            lines = {}
             for e in self.entries:                           # combine entries that now match
-                if self.key(e) in merged:
-                    m = merged[self.key(e)]
+                if self.key(e) in lines:
+                    m = lines[self.key(e)]
                     ok = self.sealed(m) and self.sealed(e)
-                    for field in ("exp", "seconds", "mesos", "mesos_seconds", "potion_cost"):
-                        if field in e:
-                            m[field] = m.get(field, 0) + e[field]
+                    m.update(merged([m, e]))
                     if e.get("potions"):
                         m["potions"] = {n: (m.get("potions") or {}).get(n, 0) + (e["potions"] or {}).get(n, 0)
                                         for n in {*(m.get("potions") or {}), *e["potions"]}}
@@ -4429,8 +4427,8 @@ class AutoLog:
                     if both and both != m.get("note"):
                         m["note"] = both
                 else:
-                    merged[self.key(e)] = e
-            self.entries = list(merged.values())
+                    lines[self.key(e)] = e
+            self.entries = list(lines.values())
 
         self._change(apply)
         if old != "Unknown map" and self.block_map == old:
