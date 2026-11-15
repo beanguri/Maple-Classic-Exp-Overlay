@@ -1438,7 +1438,8 @@ finally:
 
 if SCREEN:
     check(f"every window the tests opened is on the second screen (strays: {stray_windows(SCREEN)})", not stray_windows(SCREEN))
-check("the typeface is the bundled one, or it fell back cleanly", app._own_fonts in (True, False) and bool(app.theme.fam["extra"]))
+check(f"the typeface is the bundled one, or it fell back cleanly (own fonts: {app._own_fonts}, got {app.theme.fam['extra']!r})",
+      app.theme.fam["extra"] == ("Manrope ExtraBold" if app._own_fonts else m.PLATFORM.font("Segoe UI Semibold", "normal")[0]))
 app.close()
 
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")

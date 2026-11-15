@@ -48,7 +48,8 @@ def start_server(salt, caps, extra=()):
     cmd += ["--binding", f"REPORTS_TEST={caps}"]
     for binding in extra:
         cmd += ["--binding", binding]
-    proc = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=os.name != "nt")
     for _ in range(120):
         try:
             urllib.request.urlopen(BASE + "/", timeout=2).close()
@@ -65,7 +66,7 @@ def stop_server(proc):
     if os.name == "nt":                                 # wrangler starts child processes: stop the whole tree
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
     else:
-        proc.kill()
+        os.killpg(proc.pid, 9)
     proc.wait()
 
 

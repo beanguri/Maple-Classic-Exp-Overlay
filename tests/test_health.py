@@ -198,6 +198,9 @@ class Answer:
     def read(self, n=-1):
         return self.data
 
+    def close(self):                          # (an HTTPError closes its body when it's thrown away)
+        pass
+
 
 def answering(data=None, code=200):
     def urlopen(request, timeout=0):
@@ -519,6 +522,9 @@ try:
 
         def read(self, n=-1):
             return self.data[:n] if n and n > 0 else self.data
+
+        def close(self):
+            pass
 
     def http_error(code, data=b""):
         def urlopen(request, timeout=0):

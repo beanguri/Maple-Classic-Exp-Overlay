@@ -289,8 +289,38 @@ if sys.platform == "darwin":
     check("Nexon's own Mac app is found above the menu bar's layer, but not as high as pop-up menus",
           macos.is_game(W(6, 14, "MapleStory Classic World", "", 26, (0, 38, 1366, 796), True), 99)
           and not macos.is_game(W(7, 14, "MapleStory Classic World", "", 101, (0, 0, 200, 100), True), 99))
-    check("macOS windows can be listed", isinstance(macos.window_list(), list))
+    check("macOS windows can be listed (at least the menu bar and Dock are always there)", len(macos.window_list()) > 0)
     check("a macOS window that isn't there can't be pictured", m.PLATFORM.capture_window(2 ** 31 - 1, 0, 0, 200, 100) is None)
+    # macOS reports the window with its 28 pt title bar; the UI scale comes from the game area's height, so
+    # the bar must not be counted (live 2026-11-14: a 1280x720 game listed as 1280x748 at (4, 35)).
+    _real_list = macos.window_list
+    try:
+        macos.window_list = lambda *a: [W(8, 15, "MapleStory Classic World", "", 26, (4, 35, 1280, 748), True)]
+        windowed = m.PLATFORM.client_rect(8)
+        macos.window_list = lambda *a: [W(9, 15, "MapleStory Classic World", "", 26, (0, 0, 1920, 1080), True)]
+        fullscreen = m.PLATFORM.client_rect(9)
+    finally:
+        macos.window_list = _real_list
+    check(f"on macOS the window's title bar isn't counted as game area ({windowed})", windowed == (4, 63, 1280, 720))
+    check(f"on macOS a fullscreen game (no title bar) keeps its whole window ({fullscreen})",
+          fullscreen == (0, 0, 1920, 1080))
+    # Nexon's launcher (its own app, "MapleStory Launcher") stays open next to the game: the overlay started
+    # with only the launcher up must move to the game once it opens (both as seen live on 2026-11-14).
+    launcher = W(2560, 18857, "MapleStory Launcher", "", 0, (463, 285, 802, 526), True)
+    game = W(2578, 19119, "MapleStory Classic World", "", 0, (4, 35, 1280, 748), True)
+    showing = [launcher]
+    real_platform = m.PLATFORM
+    macos.window_list = lambda option=0, number=0: [w for w in showing if not number or w.number == number]
+    m.PLATFORM = macos.MacPlatform()
+    try:
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        before = reader._game_rect()
+        showing = [game, launcher]                           # Play pressed: the launcher stays open
+        after = [reader._game_rect() for _ in range(2)]
+    finally:
+        macos.window_list, m.PLATFORM = _real_list, real_platform
+    check(f"on macOS the launcher isn't taken for the game, and the game is found once it opens ({before}, {after})",
+          before is None and after == [(4, 63, 1280, 720)] * 2)
 check("release notes are shown as plain text, keeping names like exp_log.txt",
       m._plain_text("**New**\n- **Time** in `exp_log.txt`, see [README](https://x)") == "New\n• Time in exp_log.txt, see README")
 # B06-1: hostile release notes / version names (a broken or tampered GitHub answer) can't freeze or stretch the overlay
@@ -676,10 +706,11 @@ t.observe(9999, 0, 0, True)
 check("a one-off reading isn't counted yet", t.value == 9850)
 for v in (820, 820, 820, 9880, 9880, 9880):
     t.observe(v, 0, 0, True)
-check("a lost digit and its correction don't count as mesos gained", t.gained == 30 and t.value == 9880)
+check(f"a lost digit and its correction don't count as mesos gained, what was picked up meanwhile does ({t.gained})",
+      t.gained == 60 and t.value == 9880)
 for v in (25000, 25000, 25000):
     t.observe(v, 0, 0, True)
-check("selling loot (a big jump) doesn't count as farming", t.gained == 30)
+check("selling loot (a big jump) doesn't count as farming", t.gained == 60)
 for v in (250000,) * 7:
     t.observe(v, 0, 0, True)
 check("an extra digit (10x) needs 8 readings in a row, not 3", t.value == 25000)
@@ -1029,6 +1060,138 @@ for _ in range(3):
     t.observe(100500, 10, 0, False)
 check("mesos seen before Start aren't 'left out'", t.left_out == [0, 0] and t.value == 100500)
 
+# ---- net mesos audit (2026-11-14): a misread and its correction always cancel out
+# the leading digit is covered for a few looks (a new start from the short number), then the inventory
+# is closed and opened again 3 minutes later: only what was really picked up is earned
+t = m.MesoTracker()
+looks(t, 1_234_567, 0)
+looks(t, 1_236_000, 30)                                   # +1,433 picked up
+looks(t, 236_000, 40)                                     # the 1 covered: read short 3 times
+looks(t, 1_240_000, 220)                                  # 3 minutes later, the real count
+check(f"a hidden leading digit, then a long wait: only what was picked up is earned ({t.gained})",
+      t.gained == 5_433)
+t = m.MesoTracker()
+looks(t, 1_234_567, 0)
+looks(t, 7_234_900, 200)                                  # after a long wait, the 1 read as a 7 (believed: a big rise)
+looks(t, 1_235_000, 210)                                  # read right again
+check(f"a misread rise after a long wait is taken back by its correction ({t.gained})", t.gained == 433)
+
+# a misread confirmed while farming (1 read as 7: +6,000, small enough for 2 readings), then the map is
+# left and the right count is read in town: the misread is taken back, not 6,000 'spent'
+t = m.MesoTracker()
+looks(t, 101_000, 0)
+looks(t, 101_500, 60, 2)                                  # +500 picked up
+looks(t, 107_500, 70, 2)                                  # the misread
+t.pause(stale=True)                                       # off to town
+paused_reads(t, 101_500, 80, 2)
+check(f"a misread corrected while paused is taken back, not left out (gained {t.gained}, left out {t.left_out})",
+      t.gained == 500 and t.left_out == [0, 0])
+
+# the look that banks what was earned before a pause is a misread, then the right count is read
+for misread, kind in ((147_000, "low"), (157_000, "high")):
+    t = m.MesoTracker()
+    looks(t, 150_000, 0)
+    t.pause(stale=True, bank_inventory=True)
+    paused_reads(t, misread, 30, 2)
+    paused_reads(t, 152_000, 35, 2)                       # really 2,000 earned before the pause
+    check(f"a banking look misread {kind}, then read right: 2,000 earned (gained {t.gained})", t.gained == 2000)
+
+# back from town, the inventory first opened 20 minutes after tracking carried on: those 20 minutes'
+# mesos can't be known, so they don't count against the rate either (a steady 50,000/hr all along)
+t = m.MesoTracker()
+for run in range(0, 1801, 60):                            # 30 minutes with the inventory open
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+    t.observe(1_000_000 + run * 50_000 // 3600, run, run, True)
+t.pause(stale=True)
+for _ in range(3):
+    t.observe(1_005_000, 2000, 1800, False)               # in town (run time stays at 1,800 while paused)
+for run in range(3000, 3601, 60):                         # resumed at 1,800; the inventory open from 3,000 on
+    for _ in range(3):
+        t.observe(1_005_000 + (run - 3000) * 50_000 // 3600, run + 200, run, True)
+rate, five = t.per_hour(3600), t.per_5min(3600)
+check(f"mesos/hr after a trip leaves out the time before the first look (got {rate:,.0f}/hr, real 50,000/hr)",
+      rate is not None and abs(rate - 50_000) < 500)
+check(f"...and the last 5 minutes are the 5 minutes looked at (got {five:,.0f}, real 4,167)",
+      five is not None and abs(five - 50_000 / 12) < 50)
+
+
+# a misread confirmed near the end of a 5-minute stretch and corrected early in the next one, which goes
+# on another log line (a party member left): neither line gets the misread, and neither goes negative.
+# Really 1,210,000 + 100 every 10 s (36,000/hr); from 280 s to 330 s the 1 in 1,21x,xxx is read as a 7.
+def misread_split(misread):
+    log, path = new_log()
+    meso = m.MesoTracker()
+    real = lambda t: 1_210_000 + int(t // 10) * 100
+    t = 0.0
+    while t < 920:
+        if int(t * 2) % 6 == 0:
+            log.gain(t, 100)                                  # EXP every 3 s
+        meso.observe(real(t) + (misread if 280 <= t < 330 else 0), t, t, True)
+        log.tick(t, "Monkey Forest II", 44, 4 if t <= 300 else 3, job="Crossbowman", **meso.for_log())
+        t += 0.5
+    saved = json.loads(path.read_text())["entries"]
+    return ({e["party"]: e["mesos"] / e["mesos_seconds"] * 3600 for e in saved}, meso.gained,
+            all(log.sealed(e) and not log.edited(e) for e in log.entries))
+
+
+for misread in (60_000, -6_000):
+    rates, gained, sealed = misread_split(misread)
+    check(f"a misread of {misread:+,} split across two log lines leaves both at about 36,000 mesos/hr "
+          f"({', '.join(f'{p} ppl {r:,.0f}' for p, r in sorted(rates.items()))}; total {gained:,})",
+          len(rates) == 2 and all(abs(r - 36_000) < 3_000 for r in rates.values()))
+    check("...as saved, and the line put right is still the tracker's own (sealed, not 'edited')", sealed)
+
+# a 50-meso pickup, then the map is left and a 1,000-meso cab fare is paid 20 s later: the fare is spending,
+# left out, not a misread taking back the pickup (the drop goes below the count before it)
+t = m.MesoTracker()
+looks(t, 200_000, 0)
+looks(t, 200_050, 2)
+t.pause(stale=True)
+paused_reads(t, 199_050, 22)
+check(f"a fare paid right after leaving the map is left out, the pickup before it stays earned "
+      f"(gained {t.gained}, left out {t.left_out})", t.gained == 50 and t.left_out == [0, 1000])
+
+# +200 picked up, then a misread 500 too high just before Pause on the map; the inventory, still open, reads
+# the right count: the misread is taken back, whether paused on the map or by leaving it
+for on_map in (True, False):
+    t = m.MesoTracker()
+    looks(t, 1_000_000, 0)
+    looks(t, 1_000_200, 2)
+    looks(t, 1_000_700, 4)
+    t.pause(stale=True, bank_inventory=on_map)
+    paused_reads(t, 1_000_200, 6, 6)
+    looks(t, 1_000_200, 10)
+    looks(t, 1_000_400, 12)
+    check(f"a misread just before {'Pause on the map' if on_map else 'leaving the map'} is taken back: 400 earned "
+          f"(gained {t.gained})", t.gained == 400)
+
+
+# 30 mesos every 30 s with the inventory open; from 100 s on, the count is read 100,000 too high until
+# `misread_to`, past one or two 5-minute marks. Every log line ends up with what it would have without it.
+def misread_lines(misread_to, level_at=None):
+    log, _ = new_log()
+    meso = m.MesoTracker()
+    t = 0.0
+    while t < 1300:
+        if int(t * 2) % 6 == 0:
+            log.gain(t, 100)
+        meso.observe(5_000_000 + int(t // 30) * 30 + (100_000 if 100 <= t < misread_to else 0), t, t, True)
+        log.tick(t, "Rocky Road II", 28 if level_at is not None and t >= level_at else 27, **meso.for_log())
+        t += 0.5
+    lines = {}
+    for e in log.entries:
+        lines[e["level"]] = lines.get(e["level"], 0) + e.get("mesos", 0)
+    return lines
+
+
+for level_at in (None, 305):
+    right = misread_lines(0, level_at)
+    for misread_to in (310, 610, 910):
+        lines = misread_lines(misread_to, level_at)
+        check(f"a misread from 100 s to {misread_to} s{' (level 28 from 305 s)' if level_at else ''} comes off "
+              f"its log line: {lines}, without it {right}", lines == right)
+
 # ---- EXP outliers
 def exp_tracker(e=47850, p=50.0):
     tr = m.ExpTracker(); tr.start()
@@ -1097,6 +1260,32 @@ for e in (50721, 50721, 47850, 47950):                   # 3% too high twice, th
     read(tr, e)
 check(f"a misread a bit too high and the real number after it cancel out (gained {tr.gained:.0f})",
       tr.gained == 100 and tr.deaths == 0)
+# At low levels a minute of hunting earns as much as dying costs, so a death lands on a number seen a minute
+# ago. Lv 15 needs 7,050: from 30% (2,115), a 45 EXP kill every 3 s (two readings each) for 60 s = 900, then
+# dying costs 10% (705). (Audit 2026-11-14: the loss was taken off, gained 195, deaths 0.)
+def read15(tr, e):
+    return tr.observe([(e, int(e / 7050 * 10000) / 100)], True)
+
+tr = m.ExpTracker(); tr.start()
+for _ in range(3):
+    read15(tr, 2115)
+for k in range(1, 21):
+    read15(tr, 2115 + 45 * k); read15(tr, 2115 + 45 * k)
+for _ in range(2):
+    note = read15(tr, 3015 - 705)[1]
+check(f"dying at Lv 15 after a minute of hunting isn't taken off the EXP gained (gained {tr.gained:.0f}, deaths {tr.deaths})",
+      tr.gained == 900 and tr.deaths == 1 and note == "died")
+# Earning the loss back kill by kill isn't the misread "back in one go": at 30% (2,115) dies to 1,410, then a 45
+# EXP kill every 3 s for 51 s = 765. (Audit 2026-11-14: the death was taken back, deaths 0, gained 720.)
+tr = m.ExpTracker(); tr.start()
+for _ in range(3):
+    read15(tr, 2115)
+for _ in range(2):
+    read15(tr, 1410)
+for k in range(1, 18):
+    read15(tr, 1410 + 45 * k); read15(tr, 1410 + 45 * k)
+check(f"after dying at Lv 15, earning the loss back kill by kill keeps the death and every kill (gained {tr.gained:.0f}, "
+      f"deaths {tr.deaths})", tr.gained == 765 and tr.deaths == 1)
 log, _ = new_log()
 log.gain(0, 100)
 log.gain(1, -2000)                                       # more taken back than gained
@@ -1401,6 +1590,21 @@ check("leaving the map pauses by itself", s.waiting == "map" and not s.exp.runni
 s.map_seen("Rocky Road II")
 gains(s, 6.5)
 check("back on the same map, it carries on adding up", s.exp.running and s.exp.gained == gained + 100)
+# The kill that ends an idle pause is a level-up: Lv 46 needs 510,420; farming up to 510,000, 20 s idle, then
+# a 600 EXP kill makes Lv 47 (555,680) with 180. Its EXP isn't counted (like any gain that restarts), the level is.
+s = m.Session(15)
+s.map_seen("Rocky Road II")
+s.start(clock[0])
+for e in (509000, 509000, 509000, 509500, 510000):
+    clock[0] += 1.5
+    s.observe([(e, int(e / 510420 * 10000) / 100)], True, clock[0]); s.tick(clock[0])
+idle(s, 20)
+paused = s.waiting
+for _ in range(3):
+    clock[0] += 1.5
+    s.observe([(180, int(180 / 555680 * 10000) / 100)], True, clock[0]); s.tick(clock[0])
+check(f"a level-up that ends an idle pause is counted (paused: {paused}, levels {s.exp.levels}, running {s.exp.running})",
+      paused == "idle" and s.exp.running and s.exp.levels == 1)
 
 # ---- No Reset (0.9.16, N02): farming across maps keeps one set of numbers
 A, B = "Rocky Road II", "The Swamp of Despair I"
@@ -1679,6 +1883,25 @@ w = Watch()
 w.look(plook(s0=("Red Potion", 100), s1=("Red Potion", 50)))
 w.look(plook(s0=("Red Potion", 99), s1=("Red Potion", 48)))
 check(f"two look-alike stacks in one layout are each their own stack ({w.t.used})", w.t.used == {"Red Potion": 3})
+
+# Misread counts that come back aren't use (audit 2026-11-14). The game's digits blip: 320 read as 328 for one
+# look, then 320 again: nothing was eaten (before, 8 were charged each time: 1,280 Meat over 80 min of blips).
+w = Watch()
+for n in (320, 328, 320, 320):
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread higher for one look, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (320, 328, 328, 320):                         # 320 read as 328 for two looks in a row
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread higher for two looks, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (321, 311, 311, 321):                         # 321 read as 311 for two looks in a row
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread lower for two looks, then back, is no use ({w.t.used})", not w.t.used.get("Meat"))
+w = Watch()
+for n in (321, 311, 320, 320):                         # 321 read as 311, and one Meat eaten meanwhile
+    w.look(plook(s4=("Meat", n)))
+check(f"a count misread lower, then one below where it was, is one used ({w.t.used})", w.t.used.get("Meat") == 1)
 
 w = Watch()
 w.look(plook(s0=("Red Potion", 100), s1=("Blue Potion", 50)))
@@ -2339,7 +2562,7 @@ looks(t, 90000, 10)
 looks(t, 100000, 20)
 check("buying and selling back at a shop is no snap back", t.misreads == [])
 check("the tracker hands the log its looks, windows, misreads and resets",
-      set(t.for_log()) == {"mesos", "window_at", "misreads", "meso_epoch"} and t.for_log()["window_at"] == 5)
+      set(t.for_log()) == {"mesos", "window_at", "misreads", "meso_epoch", "corrections"} and t.for_log()["window_at"] == 5)
 log, _ = new_log()
 farm(log, 0, 935, mesos_at=steady(), misreads=[(899.5, 903)])
 r = log.runs[0] if log.runs else {}

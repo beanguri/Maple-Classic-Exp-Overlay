@@ -2951,7 +2951,7 @@ class ExpTracker:
         self._pending_lvl = None              # level-up waiting for confirmation
         self._level_start = None              # (exp, pct) right after a level-up, unverified
         self._prev_req = None                 # previous level's req, bounds the new one
-        self._before_death = None             # (reads, EXP) just before the last death
+        self._before_death = None             # (reads, EXP just before, EXP it went down to) of the last death
         self.deaths = 0
         self.last_loss = None                 # % of the level's EXP the last death cost
         self.gained = 0
@@ -3198,14 +3198,15 @@ class ExpTracker:
             if n < 2:
                 return False, "EXP went down, waiting to confirm"
             self._pending = None
-            self._before_death = (self._reads, self.exp)
+            self._before_death = (self._reads, self.exp, e)
             self.last_loss = -delta / self.req * 100
             self.deaths += 1
             self.exp, self.pct = e, p
             self._recent.append((self._reads, e))
             return True, "died"
         if self._before_death and self._reads - self._before_death[0] <= 40 and delta > 0 \
-                and e >= self._before_death[1] - 0.005 * self.req:
+                and e >= self._before_death[1] - 0.005 * self.req \
+                and abs(self.exp - self._before_death[2]) <= 0.005 * self.req:
             # Right back to where it was before "dying", in one go: those low readings were a
             # misread, not a death (EXP lost on dying comes back only slowly, from monsters).
             self._before_death, self.deaths = None, max(0, self.deaths - 1)
@@ -3236,9 +3237,20 @@ class ExpTracker:
         return True, ""
 
     def _was_near(self, e):
-        """Was EXP about e a moment ago? Then going down to it is the right number coming
-        back after a misread that was a bit too high (and counts, to cancel that out)."""
-        return any(self._reads - r <= 40 and abs(e - x) <= 0.005 * self.req for r, x in self._recent)
+        """Was EXP about e a moment ago, and since then only a misread or two? Then going down to it is the
+        right number coming back after a misread that was a bit too high (and counts, to cancel that out).
+        Climbing through many numbers since then is hunting: at low levels a minute of it earns what dying
+        costs, so a death can land on a number seen a minute ago."""
+        near = 0.005 * self.req
+        since = []                                   # the numbers shown since EXP was last about e
+        for r, x in reversed(self._recent):
+            if self._reads - r > 40:
+                return False
+            if abs(e - x) <= near:
+                return len(since) <= 2
+            if not any(abs(x - y) <= near for y in since):
+                since.append(x)
+        return False
 
     def _undoes_jump(self, e):
         """Was EXP around e a moment ago? Then a big drop to it is the right number coming
@@ -3353,6 +3365,11 @@ class MesoTracker:
         self._shown = None                    # [count, first seen, last seen] of the count shown now
         self._before = None                   # ...and of the one before it
         self._window_since = False            # a window was seen since the count shown now came in
+        self._undo = None                     # (offset, earned) of the last big change: see _correction
+        self._last_earn = None                # (count before, count after, when) of the last change earned
+        self.unseen = []                      # (from, to) run time a stale count left unknown: not in the rates
+        self.corrections = []                 # (misread at, corrected at, misread's change): for the log lines
+        self._changes = deque()               # (change, when) of recent changes earned, to pair a correction with
 
     def pause(self, stale=True, bank_inventory=False):
         """Tracking paused. Unless it's only an idle pause on the same map, what changes now
@@ -3362,6 +3379,8 @@ class MesoTracker:
         It is banked by the first look at the inventory right after pausing on the grinding
         map (bank_inventory), or by the first shop, storage or trade window that is read."""
         self.counting = False                 # don't count what changes while paused
+        if stale:
+            self._undo = None                 # (what changes in town can't be told from a correction)
         self.idle_pause = not stale
         self.stale = stale and self.value is not None
         self.bank_window = self.stale
@@ -3389,6 +3408,8 @@ class MesoTracker:
         if window:
             self.window_at = now
             self._window_since = True
+            self._undo = self._last_earn = None       # (a change at a window is real, not a misread)
+            self._changes.clear()
         if window == self.window:
             return
         if self.window and not window:        # (a sale or purchase seen, not yet confirmed: not earned either)
@@ -3413,7 +3434,8 @@ class MesoTracker:
         return f"Left out {amount:+,} mesos ({where}, not earned)."
 
     def observe(self, value, now, elapsed, running):
-        jump = False
+        jump = big_jump = False
+        old = self.value
         if value == self.value:
             self._candidate = (None, 0, 0)        # unchanged: nothing new to confirm
         else:
@@ -3451,7 +3473,7 @@ class MesoTracker:
                 self.seen_at = now                # (still a look, for a run waiting for one)
             return                                # an idle pause: counted once tracking carries on
         self.seen_at = now
-        self.read_elapsed = elapsed
+        last_read, self.read_elapsed = self.read_elapsed, elapsed
         resumed = running and not self.counting
         first = self.value is None
         if resumed:
@@ -3460,6 +3482,15 @@ class MesoTracker:
             if not self.samples:                  # the rates always have a starting point
                 self.samples.append((elapsed, self.gained))
         moved = value != self.value and not jump
+        tracked = running and not resumed and not self.window and not self.after_window
+        undo = self._correction(value) if big_jump and tracked else None
+        gained_before = self.gained
+        if undo is not None:
+            moved = False                         # (taken care of here)
+            ref, earned, misread_at = undo
+            self._earn(max(0, value - ref) - earned, elapsed)
+            if earned:
+                self._corrected(misread_at, now, earned)
         if jump and self.window and self.value is not None:
             self._leave_out(value - self.value, now)          # a big sale or purchase: a new start, and said so
         # Mesos never go down by grinding. A drop at a window's first look, or at the first look
@@ -3470,17 +3501,28 @@ class MesoTracker:
         banking = (not running and self.stale and self.value is not None
                    and ((self.window and self.window_reads == 0 and self.bank_window)
                         or (not self.window and self.bank_inventory)))
+        takes_back = moved and not running and self._takes_back(value, now)
+        if banking and moved and value < self.value and not self.window and not takes_back:
+            return                                # grinding never lowers mesos: a misread, the next look banks
         if banking:                               # what was earned before the trip, seen at last
             self.bank_window = self.bank_inventory = False
+        if takes_back:
+            self._earn(value - self.value, elapsed)                         # a misread put right, not money spent
+            self._corrected(self._last_earn[2], now, self._last_earn[1] - self._last_earn[0])
+            self._last_earn = None
+        elif banking:
             if moved and unread_spend:
                 self._leave_out(value - self.value, now)
             elif moved:
                 self._earn(value - self.value, elapsed)
+                self._last_earn = (self.value, value, now)
         elif moved and self.window and self.window_reads:
             self._leave_out(value - self.value, now)                        # exact change at a window
         elif moved and not running and not self.idle_pause and self.value is not None and self.start is not None:
             self._leave_out(value - self.value, now)                        # anything while paused
         elif resumed and (self.stale or first):
+            if self.stale and last_read is not None and elapsed > last_read:
+                self.unseen.append((last_read, elapsed))    # what was earned meanwhile is unknown
             self.stale = False                    # a first or stale count is only a new baseline
             self.samples.append((elapsed, self.gained))
         elif running and moved:
@@ -3488,6 +3530,12 @@ class MesoTracker:
                 self._leave_out(value - self.value, now)
             else:
                 self._earn(value - self.value, elapsed)
+                self._last_earn = (self.value, value, now)
+                self._pair_up(value - self.value, now)
+        if undo is not None:
+            self._undo = None
+        elif big_jump and tracked:
+            self._undo = (old - value, self.gained - gained_before, now)    # in case it was a misread
         self.drop_next = False
         if not self.window:
             self.after_window = self.late_change = False
@@ -3495,6 +3543,50 @@ class MesoTracker:
             self.window_reads += 1
         self._snap_back(value, now)
         self.value = value
+
+    def _correction(self, value):
+        """A big change that brings the count back to about where the one before it left it
+        (the last big change, plus what was earned since) is that change's correction: a hidden
+        digit read again, or a misread after a long wait put right. Returns (where the count
+        would be without the misread, what the misread earned), or None. Both are then undone
+        together, keeping only what was really picked up, however the two were judged."""
+        if self._undo is None or self.value is None:
+            return None
+        offset, earned, misread_at = self._undo
+        ref = self.value + offset
+        if ref - max(1000, 0.02 * ref) <= value <= ref + max(10000, 0.05 * ref):
+            return ref, earned, misread_at
+        return None
+
+    def _pair_up(self, change, now):
+        """A change earned while farming that undoes a recent one of about the same size, one of the
+        two a drop: grinding never lowers mesos, so the two are a misread and its correction. The
+        total is right already (both were earned); the log is told, so that when the two land in
+        different 5-minute stretches, neither stretch keeps the misread."""
+        while self._changes and now - self._changes[0][1] > 900:
+            self._changes.popleft()
+        for i in range(len(self._changes) - 1, -1, -1):
+            earlier, at = self._changes[i]
+            if (earlier > 0) != (change > 0) and abs(earlier + change) <= max(1000, 0.02 * abs(earlier)):
+                del self._changes[i]
+                self._corrected(at, now, earlier)
+                return
+        self._changes.append((change, now))
+        if len(self._changes) > 200:
+            self._changes.popleft()
+
+    def _corrected(self, misread_at, now, change):
+        self.corrections = self.corrections[-49:] + [(misread_at, now, change)]
+
+    def _takes_back(self, value, now):
+        """A drop while paused that only takes back the last change earned, within a minute and with
+        no window seen since: at least half of it, and never below the count before it (lower is money
+        spent). That change was a misread (grinding never lowers mesos), and this is its correction, so
+        the two cancel out instead of the correction counting as money spent."""
+        if self._last_earn is None:
+            return False
+        before, after, when = self._last_earn
+        return after == self.value and now - when <= 60 and before <= value <= (before + after) / 2 < after
 
     def _snap_back(self, value, now):
         """A count that goes back to the one before it (A, B, A) with no window seen meanwhile
@@ -3525,23 +3617,30 @@ class MesoTracker:
 
     def for_log(self):
         """What AutoLog.tick and AutoLog.settle are given about mesos, as keyword arguments."""
-        return dict(mesos=self.look(), window_at=self.window_at, misreads=self.misreads, meso_epoch=self.resets)
+        return dict(mesos=self.look(), window_at=self.window_at, misreads=self.misreads, meso_epoch=self.resets,
+                    corrections=self.corrections)
 
     def per_hour(self, elapsed):
         # Up to the last look, not up to now: the number holds still while nobody looks.
         end = self.read_elapsed if self.read_elapsed is not None else elapsed
-        if self.start is None or end - self.start < 30:
+        seconds = end - self.start - self._unseen(self.start, end) if self.start is not None else 0
+        if seconds < 30:
             return None
-        return self.gained / (end - self.start) * 3600
+        return self.gained / seconds * 3600
 
     def per_5min(self, elapsed):
         if self.start is None:
             return None
         end = self.read_elapsed if self.read_elapsed is not None else elapsed
         t0 = max(self.start, end - ROLLING_WINDOW)
-        if end - t0 < 60:
+        seconds = end - t0 - self._unseen(t0, end)
+        if seconds < 60:
             return None
-        return (self.gained - self._gained_at(t0)) / (end - t0) * ROLLING_WINDOW
+        return (self.gained - self._gained_at(t0)) / seconds * ROLLING_WINDOW
+
+    def _unseen(self, t0, t1):
+        """Run time between t0 and t1 whose mesos can't be known (see unseen)."""
+        return sum(max(0, min(b, t1) - max(a, t0)) for a, b in self.unseen)
 
     def _gained_at(self, t0):
         """Mesos gained by run time t0, assuming a steady rate between two looks."""
@@ -3629,6 +3728,8 @@ class Session:
             self.waiting = None
             self.last_gain = now
             t.start()
+            if result[1] == "LEVEL UP!":
+                t.levels += 1               # (its EXP isn't counted, like any gain that restarts; the level is)
         return result
 
     def look_at_bar(self, look, now, window=None):
@@ -3870,6 +3971,7 @@ class AutoLog:
         self.looks, self.epoch = [], None             # inventory looks (when, mesos gained so far)
         self.pending = None                           # a finished run waiting for a look after its end
         self._misreads = ()                           # the MesoTracker's misreads, as last given
+        self._logged_mesos = []                       # recent stretches logged with mesos: [line, first look, last look, raw mesos]
         self.no_reset = False                         # No Reset: map changes don't start over (see set_no_reset)
         version = self._load()
         if version < 2:
@@ -4045,12 +4147,12 @@ class AutoLog:
                 self.run["exp"] += amount
 
     def tick(self, now, map_name, level, party=1, mesos=None, job=None, map_read=None, hidden=False, potions=None,
-             window_at=None, misreads=(), meso_epoch=0, estimated=False, party_read=True):
+             window_at=None, misreads=(), meso_epoch=0, estimated=False, party_read=True, corrections=()):
         """Call regularly while tracking. mesos is the MesoTracker's last look (mesos gained so
         far, when read), however old, or None: a stretch's mesos are those gained between its
         first and last look (a run's: see _site_mesos). job is the class; map_read the map name exactly as read;
         potions ({name: used so far}, their cost so far) or None when potions aren't counted.
-        window_at, misreads and meso_epoch: see MesoTracker.for_log. estimated: the EXP now coming in is
+        window_at, misreads, meso_epoch and corrections: see MesoTracker.for_log. estimated: the EXP now coming in is
         estimated from a % alone (the line and run say so, and such a run is never shared). party_read: the party size
         has been read (False: `party` is only the default, and a run ending so is kept on this PC, never shared).
         Returns the entry when one was logged."""
@@ -4090,6 +4192,15 @@ class AutoLog:
         meso_gain = meso_seconds = 0
         if self.meso0 and mesos and mesos[1] > self.meso0[1]:
             meso_gain, meso_seconds = mesos[0] - self.meso0[0], mesos[1] - self.meso0[1]
+            t0, t1 = self.meso0[1], mesos[1]
+            for misread_at, corrected_at, change in corrections:
+                if t0 < corrected_at <= t1 and misread_at <= t0:      # a misread from before, put right now
+                    meso_gain += change
+                    for stretch in self._logged_mesos:
+                        if stretch[1] < misread_at <= stretch[2]:     # ...it's taken off the line that got it
+                            self._take_back(stretch[0], max(0, stretch[3] - change) - max(0, stretch[3]))
+                            stretch[3] -= change
+            raw, meso_gain = meso_gain, max(0, meso_gain)             # (grinding never loses mesos)
         used = cost = None
         if potions is not None and self.pot0 is not None:
             cost = max(0, potions[1] - self.pot0[1])
@@ -4099,11 +4210,28 @@ class AutoLog:
                           self.block_exp, now - self.start, meso_gain, meso_seconds, job,
                           self._maps_label(self.block_reads) if several else map_read or self.block_map, cost, used,
                           self.block_estimated)
+        if meso_seconds:
+            self._logged_mesos = self._logged_mesos[-49:] + [[self.key(entry), self.meso0[1], mesos[1], raw]]
         self.start, self.block_exp, self.block_estimated = now, 0, False       # the next 5 minutes start now
         self.block_maps, self.block_reads = [self.block_map] if self.block_map else [], [map_read or self.block_map] if self.block_map else []
         self.meso0 = mesos if mesos and now - mesos[1] < 10 else None
         self.pot0 = (dict(potions[0]), potions[1]) if potions is not None else None
         return entry
+
+    def _take_back(self, key, change):
+        """A misread's change, earned on an earlier line and put right after it was logged, comes off it."""
+        if not change:
+            return
+        def take():
+            for e in self.entries:
+                if self.key(e) == key:
+                    ok = self.sealed(e)
+                    e["mesos"] = max(0, e.get("mesos", 0) + change)
+                    if "seal" in e:
+                        self._reseal(e, ok)
+                    e["updated"] = time.time()
+                    return
+        self._change(take)
 
     def _new_run(self, now):
         run = {"start": now, "exp": 0, "map": None}
@@ -4232,7 +4360,7 @@ class AutoLog:
     def _deadline(p):
         return p["end"] + END_LOOK if p["paused_at"] is None else p["paused_at"] + PAUSED_WAIT
 
-    def settle(self, now, running, mesos=None, window_at=None, misreads=(), meso_epoch=0):
+    def settle(self, now, running, mesos=None, window_at=None, misreads=(), meso_epoch=0, corrections=()):
         """Call regularly, also while paused. A finished run waits for a look after its end:
         while tracking goes on it waits END_LOOK seconds (so a misread can still snap back);
         paused, it goes as soon as the look comes, or after PAUSED_WAIT seconds (see alert).

@@ -651,6 +651,24 @@ try:
 finally:
     m.time.monotonic = real_monotonic
 
+# macOS lists the game window with its 28 pt title bar: a 1920x1080 game is a 1920x1108 window. The potions are
+# read from the game area below the bar, at the scale of a 1080 tall game (audit 2026-11-14: read 0 of 10 before).
+if sys.platform == "darwin":
+    from platforms import macos
+    mac_scene = np.vstack([np.full((28, 1920, 3), 230, np.uint8), scene])
+    real_list = macos.window_list
+    macos.window_list = lambda *a: [macos.MacWindow(8, 15, "MapleStory Classic World", "", 26, (0, 0, 1920, 1108), True)]
+    try:
+        rect = macos.MacPlatform().client_rect(8)
+    finally:
+        macos.window_list = real_list
+    reader = m.ScreenReader(m.DigitTemplates.load())
+    reader.potion_table = TABLE
+    reader.mesos_digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+    r = reader._read_extras(FakeScreen(mac_scene), rect, blank)
+    check(f"on macOS the potions are read in a window with a title bar ({len(potions_of(r.bar)) if r.bar else 0} of {len(WANT)})",
+          r.bar is not None and potions_of(r.bar) == WANT)
+
 # ---- a damaged or missing potion table (B01): the overlay keeps reading, the potions say nothing, and it isn't retried every look
 real_assets = m.ASSETS
 for label, text in (("missing", None), ("not JSON", "{{{"), ("wrong shape", '{"items": "x"}'), ("bad fingerprint", '{"items": [{"name": "A", "fingerprint": [1, 2]}]}')):
@@ -1089,6 +1107,14 @@ for gh in (11, 14):
     got = [level_ocr.name_match(bean, covered(soy, *c)) for c in ((0.5, 1.0), (0.0, 0.5), (0.3, 0.7))]
     check(f"...another name with part of it covered is still 'different' ({got})", got == ["different"] * 3)
     check("...and so is another name in full", level_ocr.name_match(bean, soy) == "different")
+# A print made by hand (no font drawing): a name inked in columns 12-58, then everything left of column 48 covered.
+# What still shows is the same name's last few columns, so it's too little to tell: 'hidden', and never 'different',
+# which twice in a row starts a new session (audit 2026-11-14: 65 of 200 such names came back 'different').
+rng = np.random.default_rng(1)
+hand = np.zeros(level_ocr.PRINT_SIZE[::-1], np.float32)
+hand[2:10, 12:59] = (rng.random((8, 47)) > 0.5) * rng.uniform(1, 4, (8, 47))
+check(f"a hand-made name with all but its end covered is 'hidden' ({level_ocr.name_match(hand, covered(hand, 0.0, 0.5))})",
+      level_ocr.name_match(hand, covered(hand, 0.0, 0.5)) == "hidden")
 check("a print is a small grid of numbers, not the picture or the text",
       print_of("Fox").shape == level_ocr.PRINT_SIZE[::-1] and print_of("Fox").dtype.kind == "f")
 

@@ -178,6 +178,7 @@ class PotionTable:
 
 # ---------------------------------------------------------------- potions used
 MAX_STEP = 10               # a drop in one look bigger than this must be seen twice (a misread isn't use)
+PICKUP_MAX = 2              # the most potions picked up between two looks (monsters drop one at a time)
 DRINK_RATE = 4              # the most one stack can lose in a second (measured: 2.4 spamming a key, 2.75 holding it)
 RATE_SECONDS = (1.0, 60.0)  # a drop is judged over the time since the stack's last count: a look's worth at least, a minute at most
 LOOK_GAP = 60               # no look at all for this long: tracking was cut short (game closed, computer asleep)
@@ -192,13 +193,14 @@ def allowed_drop(seconds):
 class Stack:
     """One potion stack: its item, its count at the last look that counted it (and when that was), and the
     slot it sits in for each layout it has been seen in (none while it is out of sight)."""
-    __slots__ = ("item", "count", "seen", "at", "pending", "last_use")
+    __slots__ = ("item", "count", "seen", "at", "pending", "last_use", "last_rise")
 
     def __init__(self, item, count, seen):
         self.item, self.count, self.seen = item, count, seen
         self.at = {}                          # layout -> slot index
         self.pending = None                   # a big drop waiting to be seen a second time
         self.last_use = None                  # (count after, count before) of the use at the last look
+        self.last_rise = None                 # the count before a rise (more than a pickup) at the last look
 
 
 class PotionTracker:
@@ -291,8 +293,8 @@ class PotionTracker:
         stack.at[layout] = index
 
     def _count(self, stack, count, counting, now):
-        before, undo = stack.count, stack.last_use
-        stack.last_use = None
+        before, undo, rose_from = stack.count, stack.last_use, stack.last_rise
+        stack.last_use = stack.last_rise = None
         if count < before and str(before).startswith(str(count)):
             # "224" read as "22" or "2": the mouse cursor or a popup hides the last digits (a drink that really ends
             # on such a count, 13 -> 1, is lost too: accepted); never a use, the count starts over from here
@@ -304,10 +306,21 @@ class PotionTracker:
                 if drop > MAX_STEP and stack.pending != count:
                     stack.pending, stack.last_use = count, undo
                     return
-                self.used[stack.item] = self.used.get(stack.item, 0) + drop
-                stack.last_use = (count, before)            # (undone if the next look is `before` again)
+                if rose_from is not None and count <= rose_from:    # back down right after a rise more than a
+                    drop = rose_from - count                # pickup: the rise was a misread, only below it is use
+                if drop:
+                    self.used[stack.item] = self.used.get(stack.item, 0) + drop
+                    stack.last_use = (count, count + drop)  # (undone if the next look is that count again)
         elif counting and undo == (before, count):          # back to the count before a use: that was a misread
             self.used[stack.item] -= count - before
+        elif counting and undo and undo[0] == before < count <= undo[1] and count - before > PICKUP_MAX:
+            self.used[stack.item] -= count - before         # most of the way back: a misread, and a drink meanwhile
+        elif counting and count - before > PICKUP_MAX:
+            stack.last_rise = before
+        elif count == before:                               # (a misread held for more looks: still undone when it
+            stack.last_rise = rose_from                     # goes back; no pickup refills that much)
+            if undo and undo[1] - undo[0] > PICKUP_MAX:
+                stack.last_use = undo
         stack.count, stack.seen, stack.pending = count, now, None
 
 
