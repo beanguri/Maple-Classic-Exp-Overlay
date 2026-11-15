@@ -4655,6 +4655,7 @@ class App:
         self.note = None
         self.last_logged = None
         self.skip_log = False               # "Don't log" is on: this run isn't logged
+        self._potions_priced, self._potion_spent = {}, 0     # each potion is charged at its price when it's used
         self._sharing, self._next_share = False, 0.0       # sending runs to the site
         self.healthlog = healthlog.HealthLog(HEALTH_PATH)   # counts for the daily health report
         self._health_sending, self._health_at, self._health_snap_at = False, None, 0.0
@@ -6331,8 +6332,11 @@ class App:
         runs = len(self.autolog.runs)
         potions_now = None
         if self.cfg["potions_on"]:
-            used = self.session.potions.used
-            potions_now = (dict(used), self.session.potions.cost(self._prices().mapping()))
+            used, prices = self.session.potions.used, self._prices().mapping()
+            for n in {*used, *self._potions_priced}:
+                self._potion_spent += (used.get(n, 0) - self._potions_priced.get(n, 0)) * prices.get(n, 0)
+            self._potions_priced = dict(used)
+            potions_now = (dict(used), self._potion_spent)
         entry = self.autolog.tick(now, self.map_name, self.level, self.party, job=self.job, map_read=self.map_read,
                                   hidden=self.map_hidden, potions=potions_now,
                                   estimated=self.tracker.estimated and self.tracker.percent_mode, party_read=self.party_read,
