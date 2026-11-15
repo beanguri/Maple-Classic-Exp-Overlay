@@ -3579,14 +3579,13 @@ class MesoTracker:
 
     def _takes_back(self, value, now):
         """A drop while paused that only takes back the last change earned, within a minute and with
-        no window seen since: back to about the count before it. That change was a misread (grinding
-        never lowers mesos), and this is its correction, so the two cancel out instead of the
-        correction counting as money spent."""
+        no window seen since: at least half of it, and never below the count before it (lower is money
+        spent). That change was a misread (grinding never lowers mesos), and this is its correction, so
+        the two cancel out instead of the correction counting as money spent."""
         if self._last_earn is None:
             return False
         before, after, when = self._last_earn
-        return (after == self.value and value < after and now - when <= 60
-                and abs(value - before) <= max(1000, 0.02 * before))
+        return after == self.value and now - when <= 60 and before <= value <= (before + after) / 2 < after
 
     def _snap_back(self, value, now):
         """A count that goes back to the one before it (A, B, A) with no window seen meanwhile

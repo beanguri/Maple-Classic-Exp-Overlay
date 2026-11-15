@@ -1142,6 +1142,16 @@ for misread in (60_000, -6_000):
           len(rates) == 2 and all(abs(r - 36_000) < 3_000 for r in rates.values()))
     check("...as saved, and the line put right is still the tracker's own (sealed, not 'edited')", sealed)
 
+# a 50-meso pickup, then the map is left and a 1,000-meso cab fare is paid 20 s later: the fare is spending,
+# left out, not a misread taking back the pickup (the drop goes below the count before it)
+t = m.MesoTracker()
+looks(t, 200_000, 0)
+looks(t, 200_050, 2)
+t.pause(stale=True)
+paused_reads(t, 199_050, 22)
+check(f"a fare paid right after leaving the map is left out, the pickup before it stays earned "
+      f"(gained {t.gained}, left out {t.left_out})", t.gained == 50 and t.left_out == [0, 1000])
+
 # ---- EXP outliers
 def exp_tracker(e=47850, p=50.0):
     tr = m.ExpTracker(); tr.start()
