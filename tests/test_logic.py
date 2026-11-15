@@ -1165,6 +1165,33 @@ for on_map in (True, False):
     looks(t, 1_000_400, 12)
     check(f"a misread just before {'Pause on the map' if on_map else 'leaving the map'} is taken back: 400 earned "
           f"(gained {t.gained})", t.gained == 400)
+
+
+# 30 mesos every 30 s with the inventory open; from 100 s on, the count is read 100,000 too high until
+# `misread_to`, past one or two 5-minute marks. Every log line ends up with what it would have without it.
+def misread_lines(misread_to, level_at=None):
+    log, _ = new_log()
+    meso = m.MesoTracker()
+    t = 0.0
+    while t < 1300:
+        if int(t * 2) % 6 == 0:
+            log.gain(t, 100)
+        meso.observe(5_000_000 + int(t // 30) * 30 + (100_000 if 100 <= t < misread_to else 0), t, t, True)
+        log.tick(t, "Rocky Road II", 28 if level_at is not None and t >= level_at else 27, **meso.for_log())
+        t += 0.5
+    lines = {}
+    for e in log.entries:
+        lines[e["level"]] = lines.get(e["level"], 0) + e.get("mesos", 0)
+    return lines
+
+
+for level_at in (None, 305):
+    right = misread_lines(0, level_at)
+    for misread_to in (310, 610, 910):
+        lines = misread_lines(misread_to, level_at)
+        check(f"a misread from 100 s to {misread_to} s{' (level 28 from 305 s)' if level_at else ''} comes off "
+              f"its log line: {lines}, without it {right}", lines == right)
+
 # ---- EXP outliers
 def exp_tracker(e=47850, p=50.0):
     tr = m.ExpTracker(); tr.start()

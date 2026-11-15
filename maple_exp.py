@@ -3971,7 +3971,7 @@ class AutoLog:
         self.looks, self.epoch = [], None             # inventory looks (when, mesos gained so far)
         self.pending = None                           # a finished run waiting for a look after its end
         self._misreads = ()                           # the MesoTracker's misreads, as last given
-        self._last_mesos = None                       # the last stretch logged with mesos: its line, its looks, its raw mesos
+        self._logged_mesos = []                       # recent stretches logged with mesos: [line, first look, last look, raw mesos]
         self.no_reset = False                         # No Reset: map changes don't start over (see set_no_reset)
         version = self._load()
         if version < 2:
@@ -4190,19 +4190,17 @@ class AutoLog:
             self.start, self.block_exp = now, 0
             return None
         meso_gain = meso_seconds = 0
-        taken_back = 0
         if self.meso0 and mesos and mesos[1] > self.meso0[1]:
             meso_gain, meso_seconds = mesos[0] - self.meso0[0], mesos[1] - self.meso0[1]
-            t0, t1, last = self.meso0[1], mesos[1], self._last_mesos
+            t0, t1 = self.meso0[1], mesos[1]
             for misread_at, corrected_at, change in corrections:
                 if t0 < corrected_at <= t1 and misread_at <= t0:      # a misread from before, put right now
                     meso_gain += change
-                    if last and last[1] < misread_at <= last[2]:
-                        taken_back += change                          # ...it's taken off the line that got it
+                    for stretch in self._logged_mesos:
+                        if stretch[1] < misread_at <= stretch[2]:     # ...it's taken off the line that got it
+                            self._take_back(stretch[0], max(0, stretch[3] - change) - max(0, stretch[3]))
+                            stretch[3] -= change
             raw, meso_gain = meso_gain, max(0, meso_gain)             # (grinding never loses mesos)
-            if taken_back:
-                self._take_back(last[0], max(0, last[3] - taken_back) - max(0, last[3]))
-                self._last_mesos = last[:3] + (last[3] - taken_back,)
         used = cost = None
         if potions is not None and self.pot0 is not None:
             cost = max(0, potions[1] - self.pot0[1])
@@ -4213,7 +4211,7 @@ class AutoLog:
                           self._maps_label(self.block_reads) if several else map_read or self.block_map, cost, used,
                           self.block_estimated)
         if meso_seconds:
-            self._last_mesos = (self.key(entry), self.meso0[1], mesos[1], raw)
+            self._logged_mesos = self._logged_mesos[-49:] + [[self.key(entry), self.meso0[1], mesos[1], raw]]
         self.start, self.block_exp, self.block_estimated = now, 0, False       # the next 5 minutes start now
         self.block_maps, self.block_reads = [self.block_map] if self.block_map else [], [map_read or self.block_map] if self.block_map else []
         self.meso0 = mesos if mesos and now - mesos[1] < 10 else None
